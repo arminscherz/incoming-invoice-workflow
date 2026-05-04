@@ -19,15 +19,15 @@ The **Incoming Invoice Workflow** (ii-workflow) streamlines the transition from 
 
 The workflow follows a 3-step pipeline:
 
-1.  **Ingest:** Scans the `INGEST_DIR` for invoices and uses Gemini LLM to generate intermediate JSON data.
-2.  **Validate:** Validates extracted data, performs bank account lookups, and flags errors.
-3.  **Record:** Appends validated data to a master CSV and moves files to the `ARCHIVE_DIR`.
+1. **Ingest:** Scans the `INGEST_DIR` for invoices and uses Gemini LLM to generate intermediate JSON data.
+2. **Validate:** Validates extracted data, performs bank account lookups, and flags errors.
+3. **Record:** Appends validated data to a master CSV and moves files to the `ARCHIVE_DIR`.
 
 Failures at any stage are moved to the `ERROR_DIR` for manual review, ensuring no invoice is lost.
 
 ## 🛠 Tech Stack
 
-- **Language:** Python 3.14+
+- **Language:** Python 3.11+
 - **CLI:** [Typer](https://typer.tiangolo.com/)
 - **Data Validation:** [Pydantic v2](https://docs.pydantic.dev/)
 - **AI/LLM:** Google Gemini API (`google-genai`)
@@ -38,24 +38,27 @@ Failures at any stage are moved to the `ERROR_DIR` for manual review, ensuring n
 
 ### Prerequisites
 
-- Python 3.14 or higher.
+- Python 3.11 or higher.
 - A Google Gemini API Key.
 
 ### Installation
 
-1.  **Clone the repository:**
+1. **Clone the repository:**
+
     ```bash
     git clone https://github.com/arminscherz/incoming-invoice-workflow.git
     cd incoming-invoice-workflow
     ```
 
-2.  **Create and activate a virtual environment:**
+2. **Create and activate a virtual environment:**
+
     ```bash
-    python3.14 -m venv venv
+    python -m venv venv
     source venv/bin/activate  # On Windows: venv\Scripts\activate
     ```
 
-3.  **Install dependencies:**
+3. **Install dependencies:**
+
     ```bash
     pip install -r requirements.txt
     ```
@@ -78,24 +81,36 @@ ERROR_DIR=error
 
 The workflow can be executed as a full process or in individual steps.
 
+### activate virtual environment
+
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
 ### Main Orchestrator
+
 Process all invoices in the ingest directory:
+
 ```bash
 python -m ii_workflow.main process
 ```
 
 ### Individual Steps
+
 For fine-grained control:
 
 - **Ingest Invoices:**
+
   ```bash
   python -m ii_workflow.main ingest [PATH_TO_INVOICE]
   ```
+
 - **Validate Data:**
+
   ```bash
   python -m ii_workflow.main validate [PATH_TO_JSON]
   ```
+
 - **Record Results:**
+
   ```bash
   python -m ii_workflow.main record [PATH_TO_JSON]
   ```
@@ -121,6 +136,7 @@ For fine-grained control:
 The project uses `pytest` for automated testing.
 
 Run all tests:
+
 ```bash
 pytest
 ```
