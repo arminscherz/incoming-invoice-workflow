@@ -1,3 +1,4 @@
+import os
 import typer
 from dotenv import load_dotenv
 import ii_workflow.ingest as ingest
@@ -6,7 +7,8 @@ import ii_workflow.record as record
 from loguru import logger
 
 # Load environment variables
-load_dotenv()
+env_path = os.getenv("DOTENV_PATH")
+load_dotenv(dotenv_path=env_path if env_path else None)
 
 app = typer.Typer(
     name="ii-workflow",
