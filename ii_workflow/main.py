@@ -15,18 +15,21 @@ app = typer.Typer(
 )
 
 # Add subcommands
-app.add_typer(ingest.app, name="ingest")
-app.add_typer(validate.app, name="validate")
-app.add_typer(record.app, name="record")
+app.command("ingest")(ingest.ingest_run)
+app.command("validate")(validate.validate_run)
+app.command("record")(record.record_run)
 
-@app.command()
-def process():
+import ii_workflow.process as process_module
+
+@app.command("process")
+def process(
+    bank_statement: str = typer.Option(None, "--bank_statement", help="Path to the bank account data file (.xlsx)."),
+    result_csv: str = typer.Option("invoices_record.csv", "--result_csv", help="Filename or path for the output CSV.")
+):
     """
     Orchestrator: Combines ingest, validate, and record steps for a batch of invoices.
     """
-    logger.info("Starting process orchestrator for batch of invoices...")
-    # TODO: Implement batch logic
-    typer.echo("Process completed.")
+    process_module.process_run(bank_statement=bank_statement, result_csv=result_csv)
 
 if __name__ == "__main__":
     app()

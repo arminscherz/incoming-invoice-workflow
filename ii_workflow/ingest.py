@@ -1,14 +1,40 @@
 import os
 import json
+import time
+import base64
+import tempfile
 from pathlib import Path
 import typer
 from loguru import logger
-from google.genai import Client
+from google.genai import Client, types
 from .models import InvoiceData
 
-app = typer.Typer(help="Ingest invoices and extract data using LLM.")
+def clean_schema(schema: dict) -> dict:
+    """Cleans a Pydantic JSON schema to be compatible with Gemini REST API Schema."""
+    cleaned = {}
+    for k, v in schema.items():
+        if k in ("title", "default", "anyOf", "$defs"):
+            continue
+        if isinstance(v, dict):
+            cleaned[k] = clean_schema(v)
+        elif isinstance(v, list):
+            cleaned[k] = [clean_schema(item) if isinstance(item, dict) else item for item in v]
+        else:
+            cleaned[k] = v
+            
+    if "anyOf" in schema:
+        types_list = [t.get("type") for t in schema["anyOf"] if isinstance(t, dict) and "type" in t]
+        if "null" in types_list:
+            cleaned["nullable"] = True
+            other_types = [t for t in types_list if t != "null"]
+            if other_types:
+                cleaned["type"] = other_types[0]
+                
+    if "type" in cleaned and isinstance(cleaned["type"], str):
+        cleaned["type"] = cleaned["type"].upper()
+        
+    return cleaned
 
-@app.command("run")
 def ingest_run(
     invoice_path: str = typer.Argument(..., help="Path to the invoice file (e.g., PDF, PNG).")
 ):
@@ -17,12 +43,28 @@ def ingest_run(
     """
     invoice_file = Path(invoice_path)
     if not invoice_file.exists():
-        logger.error(f"Invoice file not found: {invoice_path}")
-        # According to architecture, return non-zero for errors
+        # Try resolving relative to INGEST_DIR
+        ingest_dir = os.getenv("INGEST_DIR", "ingest")
+        resolved_path = Path.cwd() / ingest_dir / invoice_path
+        if resolved_path.exists():
+            invoice_file = resolved_path
+        else:
+            logger.error(f"Invoice file not found: {invoice_path} (also checked {resolved_path})")
+            raise typer.Exit(code=1)
+
+    # Determine mime type
+    extension = invoice_file.suffix.lower()
+    if extension == ".pdf":
+        mime_type = "application/pdf"
+    elif extension in [".png", ".jpg", ".jpeg"]:
+        mime_type = f"image/{extension[1:]}".replace("jpeg", "jpeg") # just being safe
+    else:
+        logger.error(f"Unsupported file format: {extension}")
         raise typer.Exit(code=1)
 
-    work_dir = Path(os.getenv("WORK_DIR", "."))
-    work_dir.mkdir(parents=True, exist_ok=True)
+    ingested_dir = Path(os.getenv("INGESTED_DIR", "ingested"))
+    if not ingested_dir.exists():
+        ingested_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Ingesting invoice: {invoice_path}")
     
@@ -32,35 +74,144 @@ def ingest_run(
         raise typer.Exit(code=1)
 
     try:
-        # Initialize the client
         client = Client(api_key=api_key)
         
-        # Call Gemini with structured output
-        # Using gemini-2.0-flash as it is fast and supports structured outputs well
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[invoice_file],
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": InvoiceData,
-            }
-        )
+        # In True Batch Mode, we typically need to:
+        # 1. Upload the file to GCS or use the Files API if supported by the batch.
+        # 2. Create a batch job.
+        # 3. Poll for completion.
         
-        if not response.parsed:
-             logger.error("No data extracted from the invoice.")
-             raise typer.Exit(code=3)
-
-        # The SDK's .parsed attribute already returns a Pydantic object if response_schema is provided
-        extracted_data = response.parsed
-
-        output_path = work_dir / f"{invoice_file.stem}_extracted.json"
-        with open(output_path, "w") as f:
-            json.dump(extracted_data.model_dump(), f, indent=2)
+        logger.info(f"Submitting {invoice_file.name} in batch mode using Files API...")
+        
+        # 1. Read and base64 encode the invoice file
+        with open(invoice_file, "rb") as f:
+            encoded_image = base64.b64encode(f.read()).decode("utf-8")
+        
+        # 2. Prepare the JSONL request using manual dictionary to ensure correct REST API camelCase
+        raw_schema = InvoiceData.model_json_schema()
+        schema_dict = clean_schema(raw_schema)
+        
+        request_payload = {
+            "request": {
+                "systemInstruction": {
+                    "parts": [
+                        {
+                            "text": (
+                                "You are an expert at extracting structured data from invoices and receipts. "
+                                "Note that the scanned image may contain both the invoice and a separate payment receipt. "
+                                "If the total amounts differ between the invoice and the receipt, this is often due to tips. "
+                                "In such cases, prioritize the total amount listed on the invoice for the total_invoice_amount_* fields. "
+                                "Use the tip_amount field for the tip and total_payment_amount_gross for the receipt total."
+                            )
+                        }
+                    ]
+                },
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "inlineData": {
+                                    "mimeType": mime_type,
+                                    "data": encoded_image
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": schema_dict
+                }
+            }
+        }
+        
+        request_json = json.dumps(request_payload)
+        
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as temp_jsonl:
+            temp_jsonl.write(request_json + "\n")
+            temp_jsonl_path = temp_jsonl.name
+        
+        try:
+            # 3. Upload JSONL to Gemini Files API
+            uploaded_file = client.files.upload(
+                file=temp_jsonl_path,
+                config={"mime_type": "application/jsonl"}
+            )
+            logger.info(f"Uploaded request file: {uploaded_file.name}")
             
-        logger.info(f"Extracted data saved to {output_path}")
-        typer.echo(f"Successfully processed {invoice_path}")
+            # 4. Create Batch Job using the uploaded file name
+            job = client.batches.create(
+                model="gemini-2.0-flash",
+                src=uploaded_file.name
+            )
+            
+            job_name = job.name
+            logger.info(f"Batch job created: {job_name}")
+            
+            # 5. Polling loop
+            while True:
+                job_status = client.batches.get(name=job_name)
+                state_str = str(job_status.state)
+                logger.info(f"Job state: {state_str}")
+                
+                if "SUCCEEDED" in state_str or "COMPLETED" in state_str:
+                    break
+                elif "FAILED" in state_str or "CANCELED" in state_str:
+                    logger.error(f"Batch job failed with state: {state_str}")
+                    raise typer.Exit(code=1)
+                
+                time.sleep(30)
+                
+            # 6. Retrieve results from the output file
+            # The output info should contain the file name for the results
+            results = download_batch_results(client, job_status)
+            if not results:
+                 logger.error("No data extracted from the batch job.")
+                 raise typer.Exit(code=3)
+
+            extracted_data = results[0]
+            
+            output_path = ingested_dir / f"{invoice_file.stem}.json"
+            with open(output_path, "w") as f:
+                json.dump(extracted_data.model_dump(), f, indent=2)
+                
+            logger.info(f"Extracted data saved to {output_path}")
+            typer.echo(str(output_path.absolute()))
+            
+        finally:
+            # Cleanup temp file
+            if os.path.exists(temp_jsonl_path):
+                os.remove(temp_jsonl_path)
 
     except Exception as e:
         logger.error(f"Error during LLM extraction: {e}")
         # Using architecture code 1 for critical failures
         raise typer.Exit(code=1)
+
+def download_batch_results(client: Client, job) -> list[InvoiceData]:
+    """
+    Helper to download and parse results from a completed batch job using the Files API.
+    """
+    # In the Developer API, the output file name is stored in job.dest.file_name
+    output_file_name = None
+    if hasattr(job, 'dest') and job.dest and job.dest.file_name:
+        output_file_name = job.dest.file_name
+
+    results = []
+    
+    if output_file_name:
+        content_bytes = client.files.download(file=output_file_name)
+        # Content is JSONL
+        for line in content_bytes.decode("utf-8").splitlines():
+            if not line.strip(): continue
+            resp_json = json.loads(line)
+            
+            # Extract the text and parse into InvoiceData
+            if "response" in resp_json:
+                candidates = resp_json["response"].get("candidates", [])
+                if candidates:
+                    text = candidates[0]["content"]["parts"][0]["text"]
+                    data_dict = json.loads(text)
+                    results.append(InvoiceData.model_validate(data_dict))
+                    
+    return results

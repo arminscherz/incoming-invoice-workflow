@@ -4,8 +4,8 @@ This purpose of this workflow is to automate the reception and filing of incomin
 
 ## High level idea
 
-1. The invoices are expected to be stored as scanned images (e.g. PDFs, PNG) in the INGEST_DIR directory.
-2. A LLM is called to ingest the scanned invoices and extract structured invoice data as a JSON.
+1. The invoices are expected to be stored as scanned images (e.g. PDFs, PNG) in the INGEST_DIR directory. Payment receipts may be provided together with the invoice in the same source image.
+2. A LLM is called to ingest the scanned invoices & payment receipts and extract structured invoice data as a JSON.
 3. Data is validated and accounting details are calculated. Invoices that fail validation or extraction are moved to an ERROR_DIR.
 4. The extracted invoice data is used to search in a bank account data file (e.g. xlsx-Format) to see if the invoice is already paid.
 5. The extracted data is stored as a CSV in the WORK_DIR directory. Duplicate checking is performed against the output CSV (e.g., matching Vendor and Invoice Number) to prevent double processing.
