@@ -25,6 +25,10 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   - If a match is found: Update `payment_method` in the JSON to `"Bankkonto"`.
   - If no match is found: Update `payment_method` in the JSON to `"bar"`.
   - If validation fails (e.g., math doesn't add up), log the error and return a non-zero exit code so the orchestrator can move it to the `ERROR_DIR`.
+- **Tip to 0% VAT Allocation**:
+  - After validations, if `tip_amount` > 0 and `tax_amount_0_percent_VAT` == 0, set `tax_amount_0_percent_VAT = tip_amount`.
+  - Skip if `tip_amount` == 0 or if it already equals `tax_amount_0_percent_VAT`.
+  - Log the update for transparency.
 
 ## Implementation Details
 
@@ -36,7 +40,8 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   4. If `--bank_statement` is provided, load the `.xlsx` file using `openpyxl`.
   5. Iterate through transactions and apply the heuristic matching logic.
   6. Update the `InvoiceData.payment_method` field ("Bankkonto" or "bar").
-  7. Save the updated JSON to `VALIDATED_DIR` (as defined in `.env`), ensuring the directory exists.
+  7. **Tip Allocation**: If `tip_amount` > 0 and `tax_amount_0_percent_VAT` is 0, update it to include the tip and log the change.
+  8. Save the updated JSON to `VALIDATED_DIR` (as defined in `.env`), ensuring the directory exists.
   8. Print the absolute path of the output file to stdout.
 
 ## Testing Strategy
@@ -45,3 +50,5 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
 - Test 1: Successful math validation + Bank match found -> `payment_method == "Bankkonto"`.
 - Test 2: Successful math validation + No bank match -> `payment_method == "bar"`.
 - Test 3: Failed math validation (e.g., gross != net + tax) -> Error raised and non-zero exit code.
+- Test 4: Tip Allocation -> If `tip_amount` is 5.0 and `tax_amount_0_percent_VAT` is 0, it should become 5.0 in the output.
+- Test 5: Tip Allocation Skip -> If `tip_amount` is 5.0 and `tax_amount_0_percent_VAT` is already 5.0, no change/log.

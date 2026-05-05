@@ -140,8 +140,9 @@ def ingest_run(
             logger.info(f"Uploaded request file: {uploaded_file.name}")
             
             # 4. Create Batch Job using the uploaded file name
+            ai_model = os.getenv("AI_MODEL", "gemini-flash-latest")
             job = client.batches.create(
-                model="gemini-2.0-flash",
+                model=ai_model,
                 src=uploaded_file.name
             )
             

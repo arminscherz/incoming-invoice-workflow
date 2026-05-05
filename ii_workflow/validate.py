@@ -216,7 +216,17 @@ def validate_run(
     else:
         logger.info(f"Skipping bank lookup for {json_path.name}: payment_method set to 'bar'")
 
-    # 6. Save Validated JSON
+    # 6. Tip to 0% VAT Allocation
+    if invoice.tip_amount > 0:
+        if invoice.tax_amount_0_percent_VAT == 0:
+            logger.info(f"Allocating tip amount ({invoice.tip_amount}) to tax_amount_0_percent_VAT for {json_path.name}")
+            invoice.tax_amount_0_percent_VAT = invoice.tip_amount
+        elif invoice.tip_amount == invoice.tax_amount_0_percent_VAT:
+            logger.debug(f"Tip amount already matches tax_amount_0_percent_VAT for {json_path.name}. Skipping calculation.")
+        else:
+            logger.warning(f"Tip amount ({invoice.tip_amount}) differs from non-zero tax_amount_0_percent_VAT ({invoice.tax_amount_0_percent_VAT}) for {json_path.name}. No automatic allocation performed.")
+
+    # 7. Save Validated JSON
     invoice.payment_method = payment_method
     
     validated_dir = Path(os.getenv("VALIDATED_DIR", "."))

@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# testing folders
+/validated/
+/archive-json/
+/ingested/
+/archive/
+/Eingang/
+/error/
+*.csv

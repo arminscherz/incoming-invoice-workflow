@@ -344,3 +344,126 @@ def test_validate_fallback_keyword_match(valid_invoice_json, dummy_bank_statemen
     with open(output_path, "r") as f:
         data = json.load(f)
         assert data["payment_method"] == "Bankkonto"
+
+@pytest.fixture
+def tip_allocation_invoice_json(tmp_path):
+    """Creates an invoice JSON file for tip allocation testing."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Geschäftsessen",
+        "invoice_number": "INV-TIP-001",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 100.0,
+        "total_invoice_amount_net": 90.0,
+        "total_invoice_amount_tax": 10.0,
+        "tip_amount": 5.0,
+        "total_payment_amount_gross": 105.0,
+        "tax_amount_0_percent_VAT": 0.0,
+        "tax_amount_10_percent_VAT": 10.0,
+        "tax_amount_13_percent_VAT": 0.0,
+        "tax_amount_20_percent_VAT": 0.0,
+        "currency": "EUR",
+        "iban": None,
+        "payment_method": None
+    }
+    file_path = tmp_path / "tip_allocation.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+    return str(file_path)
+
+def test_validate_tip_allocation_to_0_vat(tip_allocation_invoice_json, tmp_path, mocker):
+    """Test that tip is allocated to 0% VAT if that field is currently 0."""
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    result = runner.invoke(app, ["validate", tip_allocation_invoice_json])
+    
+    assert result.exit_code == 0
+    
+    output_path = validated_dir / "tip_allocation-validated.json"
+    assert output_path.exists()
+    
+    with open(output_path, "r") as f:
+        data = json.load(f)
+        # tax_amount_0_percent_VAT was 0.0, tip_amount was 5.0 -> should be 5.0
+        assert data["tax_amount_0_percent_VAT"] == 5.0
+
+def test_validate_tip_allocation_skip_when_already_equal(tmp_path, mocker):
+    """Test that we skip allocation if tip already equals the 0% VAT field."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Geschäftsessen",
+        "invoice_number": "INV-TIP-002",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 105.0,
+        "total_invoice_amount_net": 90.0,
+        "total_invoice_amount_tax": 15.0,
+        "tip_amount": 5.0,
+        "total_payment_amount_gross": 105.0,
+        "tax_amount_0_percent_VAT": 5.0, # Already equal to tip
+        "tax_amount_10_percent_VAT": 10.0,
+        "tax_amount_13_percent_VAT": 0.0,
+        "tax_amount_20_percent_VAT": 0.0,
+        "currency": "EUR",
+        "iban": None,
+        "payment_method": None
+    }
+    file_path = tmp_path / "tip_skip_equal.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    result = runner.invoke(app, ["validate", str(file_path)])
+    assert result.exit_code == 0
+    
+    with open(validated_dir / "tip_skip_equal-validated.json", "r") as f:
+        data = json.load(f)
+        assert data["tax_amount_0_percent_VAT"] == 5.0 # Unchanged
+
+def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
+    """Test that we skip allocation if 0% VAT is already non-zero (but different from tip)."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Geschäftsessen",
+        "invoice_number": "INV-TIP-003",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 100.0,
+        "total_invoice_amount_net": 80.0,
+        "total_invoice_amount_tax": 20.0,
+        "tip_amount": 5.0,
+        "total_payment_amount_gross": 105.0,
+        "tax_amount_0_percent_VAT": 10.0, # Already non-zero
+        "tax_amount_10_percent_VAT": 10.0,
+        "tax_amount_13_percent_VAT": 0.0,
+        "tax_amount_20_percent_VAT": 0.0,
+        "currency": "EUR",
+        "iban": None,
+        "payment_method": None
+    }
+    file_path = tmp_path / "tip_skip_nonzero.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    result = runner.invoke(app, ["validate", str(file_path)])
+    assert result.exit_code == 0
+    
+    with open(validated_dir / "tip_skip_nonzero-validated.json", "r") as f:
+        data = json.load(f)
+        assert data["tax_amount_0_percent_VAT"] == 10.0 # Unchanged
