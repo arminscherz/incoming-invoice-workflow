@@ -98,7 +98,7 @@ def validate_run(
         invoice.total_invoice_amount_net = net
         logger.info(f"Recalculated Net amount: {net}")
 
-    # 4. Gross vs Net+Tax Validation    
+    # 5. Gross vs Net+Tax Validation    
     if abs(gross - (net + tax)) > 0.05:
         logger.error(f"Math validation failed: Gross ({gross}) does not equal Net ({net}) + Tax ({tax})")
         raise typer.Exit(code=1)
@@ -129,7 +129,7 @@ def validate_run(
 
     logger.success(f"Validation passed: Net amounts match the total net amount for {json_path.name}")
     
-    # 4. Tip Validation
+    # 6. Tip Validation
     if invoice.total_payment_amount_gross is not None:
         calculated_tip = round(invoice.total_payment_amount_gross - invoice.total_invoice_amount_gross, 2)
         if abs(calculated_tip - invoice.tip_amount) > 0.05:
@@ -139,7 +139,7 @@ def validate_run(
     else:
         logger.info(f"Skipping tip validation for {json_path.name} (no payment amount provided)")
 
-    # 5. Bank Matching Heuristics
+    # 7. Bank Matching Heuristics
     payment_method = "bar" # Default
     target_amount = invoice.total_payment_amount_gross if invoice.total_payment_amount_gross is not None else invoice.total_invoice_amount_gross
     invoice_date = _parse_date(invoice.date)
@@ -228,7 +228,7 @@ def validate_run(
     else:
         logger.info(f"Skipping bank lookup for {json_path.name}: payment_method set to 'bar'")
 
-    # 6. Tip to 0% VAT Allocation
+    # 8. Tip to 0% VAT Allocation
     if invoice.tip_amount > 0:
         if invoice.net_amount_0_percent_VAT == 0:
             logger.info(f"Allocating tip amount ({invoice.tip_amount}) to net_amount_0_percent_VAT for {json_path.name}")
@@ -238,7 +238,7 @@ def validate_run(
         else:
             logger.warning(f"Tip amount ({invoice.tip_amount}) differs from non-zero net_amount_0_percent_VAT ({invoice.net_amount_0_percent_VAT}) for {json_path.name}. No automatic allocation performed.")
 
-    # 7. Save Validated JSON
+    # 9. Save Validated JSON
     invoice.payment_method = payment_method
     
     validated_dir = Path(os.getenv("VALIDATED_DIR", "."))

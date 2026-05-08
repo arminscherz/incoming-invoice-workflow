@@ -252,19 +252,45 @@ def ingest_run(
             )
             logger.info(f"Uploaded request file: {uploaded_file.name}")
             
-            # 4. Create Batch Job using the uploaded file name
+            # 4. Create Batch Job using the uploaded file name with retries
             ai_model = os.getenv("AI_MODEL", "gemini-flash-latest")
-            job = client.batches.create(
-                model=ai_model,
-                src=uploaded_file.name
-            )
-            
+            max_retries = 3
+            job = None
+            for attempt in range(max_retries + 1):
+                try:
+                    job = client.batches.create(
+                        model=ai_model,
+                        src=uploaded_file.name
+                    )
+                    break
+                except Exception as e:
+                    if attempt < max_retries:
+                        wait_time = 5 * (2 ** attempt)
+                        logger.warning(f"Batch creation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"Batch creation failed after {max_retries + 1} attempts: {e}")
+                        raise
+
             job_name = job.name
             logger.info(f"Batch job created: {job_name}")
-            
-            # 5. Polling loop
+
+            # 5. Polling loop with retries for status check
             while True:
-                job_status = client.batches.get(name=job_name)
+                job_status = None
+                for poll_attempt in range(max_retries + 1):
+                    try:
+                        job_status = client.batches.get(name=job_name)
+                        break
+                    except Exception as e:
+                        if poll_attempt < max_retries:
+                            wait_time = 5 * (2 ** poll_attempt)
+                            logger.warning(f"Polling failed (attempt {poll_attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(f"Polling failed after {max_retries + 1} attempts: {e}")
+                            raise
+
                 state_str = str(job_status.state)
                 logger.info(f"Job state: {state_str}")
                 
