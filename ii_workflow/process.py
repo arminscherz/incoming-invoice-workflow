@@ -1,5 +1,6 @@
 import os
 import shutil
+import json
 from pathlib import Path
 import typer
 from loguru import logger
@@ -56,6 +57,8 @@ def process_run(
         logger.info(f"No invoice files found in {ingest_dir}")
         return
         
+    execution_results = []
+        
     for scan_file in invoice_files:
         logger.info(f"--- Processing {scan_file.name} ---")
         
@@ -64,21 +67,36 @@ def process_run(
         validated_json = validated_dir / f"{scan_file.stem}-validated.json"
         
         success = False
+        status = "ERROR"
+        error_details = "Unknown error"
+        
         try:
             # Step 1: Ingest
             logger.info("Step 1: Ingest")
-            ingest_run(str(scan_file))
+            try:
+                ingest_run(str(scan_file))
+            except typer.Exit as e:
+                if e.exit_code != 0:
+                    error_details = "Step: Ingest"
+                    raise
             
             if not intermediate_json.exists():
                 logger.error(f"Ingest failed to produce {intermediate_json}")
+                error_details = "Step: Ingest (Missing output)"
                 raise typer.Exit(code=1)
                 
             # Step 2: Validate
             logger.info("Step 2: Validate")
-            validate_run(str(intermediate_json), bank_statement=resolved_bank_stmt)
+            try:
+                validate_run(str(intermediate_json), bank_statement=resolved_bank_stmt)
+            except typer.Exit as e:
+                if e.exit_code != 0:
+                    error_details = "Step: Validate"
+                    raise
             
             if not validated_json.exists():
                 logger.error(f"Validate failed to produce {validated_json}")
+                error_details = "Step: Validate (Missing output)"
                 raise typer.Exit(code=1)
                 
             # Step 3: Record
@@ -88,6 +106,7 @@ def process_run(
                 record_run(str(validated_json), result_csv=result_csv)
             except typer.Exit as e:
                 if e.exit_code != 0:
+                    error_details = "Step: Record"
                     raise
                 else:
                     logger.info("Record finished successfully (possibly as duplicate).")
@@ -97,15 +116,36 @@ def process_run(
         except typer.Exit as e:
             if e.exit_code != 0:
                 logger.error(f"Processing failed for {scan_file.name} at some step.")
+                # error_details already set in the try block
             else:
                 # Should not happen at the top level except if record exited with 0
                 success = True
         except Exception as e:
             logger.exception(f"Unexpected error processing {scan_file.name}: {e}")
+            error_details = f"Unexpected: {str(e)}"
             
         # 4. Archiving and Cleanup
         try:
             if success:
+                # Post-processing status check for SUCCESS/WARNING
+                status = "SUCCESS"
+                reason = ""
+                
+                try:
+                    if validated_json.exists():
+                        with open(validated_json, "r") as f:
+                            data = json.load(f)
+                            if not data.get("gdrive_link"):
+                                status = "WARNING"
+                                reason = "Missing GDrive link"
+                            elif resolved_bank_stmt and data.get("payment_method") == "bar":
+                                status = "WARNING"
+                                reason = "Bank lookup failed"
+                except Exception as e:
+                    logger.warning(f"Could not read validated JSON for summary: {e}")
+
+                execution_results.append({"invoice": scan_file.name, "status": status, "reason": reason})
+                
                 logger.info(f"Archiving successful file {scan_file.name}")
                 shutil.move(str(scan_file), str(scan_archive_dir / scan_file.name))
                 
@@ -115,9 +155,27 @@ def process_run(
                 if validated_json.exists():
                     shutil.move(str(validated_json), str(json_archive_dir / validated_json.name))
             else:
+                execution_results.append({"invoice": scan_file.name, "status": "ERROR", "reason": error_details})
                 logger.warning(f"Moving failed file {scan_file.name} to ERROR_DIR")
                 shutil.move(str(scan_file), str(error_dir / scan_file.name))
         except Exception as e:
             logger.error(f"Failed to move files during cleanup for {scan_file.name}: {e}")
 
     logger.info("Batch processing completed.")
+    
+    # 5. Output Summary
+    logger.info("=== Process Summary ===")
+    success_count = 0
+    warning_count = 0
+    error_count = 0
+    
+    for res in execution_results:
+        status = res["status"]
+        reason_str = f" - {res['reason']}" if res["reason"] else ""
+        logger.info(f"[{status}] {res['invoice']}{reason_str}")
+        
+        if status == "SUCCESS": success_count += 1
+        elif status == "WARNING": warning_count += 1
+        elif status == "ERROR": error_count += 1
+        
+    logger.info(f"Summary: Total: {len(execution_results)} | Success: {success_count} | Warning: {warning_count} | Error: {error_count}")

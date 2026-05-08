@@ -16,6 +16,11 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   - Check that the sum of all VAT fields (`tax_amount_X_percent_VAT`) equals `total_invoice_amount_tax`.
   - **Tip Validation**: If `total_payment_amount_gross` is provided, the difference between it and `total_invoice_amount_gross` should match `tip_amount`. Log a warning if they differ.
   - **Net amounts for differrent tax-levels matches total net amount**: `total_invoice_amount_net` must match (+ / - 5 cents) the sum of `net_amount_0_percent_VAT`, `net_amount_10_percent_VAT`, `net_amount_13_percent_VAT`, and `net_amount_20_percent_VAT`.
+  - **VAT amount consistency**:
+    - `tax_amount_0_percent_VAT` must match `net_amount_0_percent_VAT * 0.00` (+ / - 2 cents).
+    - `tax_amount_10_percent_VAT` must match `net_amount_10_percent_VAT * 0.10` (+ / - 2 cents).
+    - `tax_amount_13_percent_VAT` must match `net_amount_13_percent_VAT * 0.13` (+ / - 2 cents).
+    - `tax_amount_20_percent_VAT` must match `net_amount_20_percent_VAT * 0.20` (+ / - 2 cents).
 - **Bank Lookup Logic (Heuristics)**:
   - Read the `.xlsx` file, skipping lines until the header row ('Valutadatum', 'Buchungsdatum', 'Betrag', 'Währung', 'Gegenpartei', 'Bezeichnung', 'Referenz', 'Nachricht', 'Zahlungs-ID').
   - Compare each transaction against the invoice:
@@ -53,3 +58,4 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
 - Test 3: Failed math validation (e.g., gross != net + tax) -> Error raised and non-zero exit code.
 - Test 4: Tip Allocation -> If `tip_amount` is 5.0 and `tax_amount_0_percent_VAT` is 0, it should become 5.0 in the output.
 - Test 5: Tip Allocation Skip -> If `tip_amount` is 5.0 and `tax_amount_0_percent_VAT` is already 5.0, no change/log.
+- Test 6: VAT consistency check -> If `tax_amount_20_percent_VAT` is significantly different from `net_amount_20_percent_VAT * 0.2`, it should fail validation.

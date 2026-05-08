@@ -30,7 +30,7 @@ Ingest invoice images (PDF, PNG) and extract structured JSON data using the Goog
   - If the scan contains both an invoice and a payment receipt, prioritize the invoice for the `total_invoice_amount_*` fields. Extract the tip separately.
 - **Batching**: The CLI command `ingest` will take a single file path for the MVP (if the file path is not fully qualified, interpret it as the filename in 'working dir /INGEST_DIR/filename').
 The `process` orchestrator will loop through files in `INGEST_DIR`.
-- **Polling**: Use a 10-second interval for checking batch completion status.
+- **Polling**: Use a 30-second interval for checking batch completion status.
 
 ## Implementation Details
 

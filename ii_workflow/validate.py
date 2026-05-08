@@ -129,6 +129,21 @@ def validate_run(
 
     logger.success(f"Validation passed: Net amounts match the total net amount for {json_path.name}")
     
+    # 5b. VAT Amount Consistency Check
+    vat_checks = [
+        ("0%", invoice.tax_amount_0_percent_VAT, invoice.net_amount_0_percent_VAT * 0.00),
+        ("10%", invoice.tax_amount_10_percent_VAT, invoice.net_amount_10_percent_VAT * 0.10),
+        ("13%", invoice.tax_amount_13_percent_VAT, invoice.net_amount_13_percent_VAT * 0.13),
+        ("20%", invoice.tax_amount_20_percent_VAT, invoice.net_amount_20_percent_VAT * 0.20),
+    ]
+    
+    for vat_name, actual_tax, expected_tax in vat_checks:
+        if abs(actual_tax - expected_tax) > 0.02:
+            logger.error(f"VAT amount consistency check failed for {vat_name}: Actual tax ({actual_tax}) does not match expected tax ({round(expected_tax, 2)}) for {json_path.name}")
+            raise typer.Exit(code=1)
+
+    logger.success(f"Validation passed: VAT amounts are consistent for {json_path.name}")
+    
     # 6. Tip Validation
     if invoice.total_payment_amount_gross is not None:
         calculated_tip = round(invoice.total_payment_amount_gross - invoice.total_invoice_amount_gross, 2)
