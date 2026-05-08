@@ -43,6 +43,10 @@ def test_ingest_run_success(mock_genai_client, tmp_path, mocker):
         "tax_amount_10_percent_VAT": 0.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 100.0,
         "currency": "EUR",
         "iban": "AT123456789",
         "payment_method": None
@@ -107,9 +111,15 @@ def test_ingest_run_success(mock_genai_client, tmp_path, mocker):
         assert data["vendor_name"] == "Test Vendor"
         assert data["total_invoice_amount_gross"] == 120.0
         assert data["purchase_category"] == "Büromaterial"
+        assert data["net_amount_20_percent_VAT"] == 100.0
 
-def test_ingest_run_file_not_found():
+def test_ingest_run_file_not_found(tmp_path, mocker):
     """Test ingest run with a non-existent file."""
+    mocker.patch.dict(os.environ, {
+        "WORK_DIR": str(tmp_path), 
+        "INGEST_DIR": str(tmp_path),
+        "INGESTED_DIR": str(tmp_path / "ingested")
+    })
     result = runner.invoke(app, ["ingest", "non_existent.pdf"])
     assert result.exit_code != 0
 
@@ -190,7 +200,11 @@ def test_ingest_run_relative_path(mock_genai_client, tmp_path, mocker):
                         "date": "2024-05-04",
                         "total_invoice_amount_gross": 100.0,
                         "total_invoice_amount_net": 80.0,
-                        "total_invoice_amount_tax": 20.0
+                        "total_invoice_amount_tax": 20.0,
+                        "net_amount_0_percent_VAT": 0.0,
+                        "net_amount_10_percent_VAT": 0.0,
+                        "net_amount_13_percent_VAT": 0.0,
+                        "net_amount_20_percent_VAT": 80.0
                     })}]
                 }
             }]

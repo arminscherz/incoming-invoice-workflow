@@ -15,6 +15,7 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   - Check that `total_invoice_amount_gross` equals `total_invoice_amount_net` + `total_invoice_amount_tax`.
   - Check that the sum of all VAT fields (`tax_amount_X_percent_VAT`) equals `total_invoice_amount_tax`.
   - **Tip Validation**: If `total_payment_amount_gross` is provided, the difference between it and `total_invoice_amount_gross` should match `tip_amount`. Log a warning if they differ.
+  - **Net amounts for differrent tax-levels matches total net amount**: `total_invoice_amount_net` must match (+ / - 5 cents) the sum of `net_amount_0_percent_VAT`, `net_amount_10_percent_VAT`, `net_amount_13_percent_VAT`, and `net_amount_20_percent_VAT`.
 - **Bank Lookup Logic (Heuristics)**:
   - Read the `.xlsx` file, skipping lines until the header row ('Valutadatum', 'Buchungsdatum', 'Betrag', 'Währung', 'Gegenpartei', 'Bezeichnung', 'Referenz', 'Nachricht', 'Zahlungs-ID').
   - Compare each transaction against the invoice:
@@ -42,7 +43,7 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   6. Update the `InvoiceData.payment_method` field ("Bankkonto" or "bar").
   7. **Tip Allocation**: If `tip_amount` > 0 and `tax_amount_0_percent_VAT` is 0, update it to include the tip and log the change.
   8. Save the updated JSON to `VALIDATED_DIR` (as defined in `.env`), ensuring the directory exists.
-  8. Print the absolute path of the output file to stdout.
+  9. Print the absolute path of the output file to stdout.
 
 ## Testing Strategy
 

@@ -98,4 +98,5 @@ Invoices triggering non-zero exits should be logged clearly and moved to `ERROR_
 
 - **MOC concept**: Create a Mini Orange Concept (MOC) for each new feature. The MOC will be a markdown file that describes the feature and how it should be implemented. This MOC will be used to generate the test cases and the implementation code.
 - Use `pytest` for unit, integration and functional testing.
-- alle external dependencies (LLM, Filesystem) should be mocked using `pytest` and `pytest-mock`.
+- all external dependencies (LLM, Filesystem) should be mocked using `pytest` and `pytest-mock`.
+- The tests must not leave any intermediate files (JSON or scanned image files) behind in the filesystem. These files are only expected to be written during the real run of the commands. The test files should be cleaned up after the test run.

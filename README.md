@@ -72,16 +72,16 @@ Create a `.env` file in the root directory based on the project requirements:
 GEMINI_API_KEY=your_gemini_api_key_here
 
 # Directory Configuration
-INGEST_DIR=ingest
-INGESTED_DIR=ingested
-VALIDATED_DIR=validated
-ARCHIVE_DIR=archive
-SCAN_ARCHIVE_DIR=archive/scans
-JSON_ARCHIVE_DIR=archive/jsons
-ERROR_DIR=error
+INGEST_DIR=the directory (relative to shell's working directory) where scanned invoice / payment receipt files are expected
+INGESTED_DIR=The directory (relative to shell's working directory) where the extracted, structured data from LLM (JSON) is stored
+VALIDATED_DIR=The directory (relative to shell's working directory) where the validated data (JSON) is stored
+ARCHIVE_DIR=the archive directory (relative to shell's working directory) for processed files 
+SCAN_ARCHIVE_DIR=the archive directory (relative to shell's working directory) for processed scan-files (e.g. PDFS, PNGs)
+JSON_ARCHIVE_DIR=the archive directory (relative to shell's working directory) for processed strctured files (JSON)
+ERROR_DIR=the directory (relative to shell's working directory) where files are moved, that could not be processed
 
 # Record Configuration (Semicolon separated JSON keys)
-RESULT_COLUMNS=vendor_name;invoice_number;date;purchase_category;total_invoice_amount_gross;currency;payment_method
+RESULT_COLUMNS=Columns for the CSV-Output-File (Semicolon separated)
 ```
 
 ## 📖 Usage
@@ -100,8 +100,8 @@ Process all invoices in the ingest directory. It automatically chains `ingest`, 
 python -m ii_workflow.main process [--bank_statement PATH] [--result_csv FILENAME]
 ```
 
-*   **Auto-detection:** If no `--bank_statement` is provided, it automatically scans `INGEST_DIR` for `.xlsx` files and picks the newest one.
-*   **Archiving:** Successful runs move scans to `SCAN_ARCHIVE_DIR` and JSONs to `JSON_ARCHIVE_DIR`. Failures move the scan file to `ERROR_DIR`.
+- **Auto-detection:** If no `--bank_statement` is provided, it automatically scans `INGEST_DIR` for `.xlsx` files and picks the newest one.
+- **Archiving:** Successful runs move scans to `SCAN_ARCHIVE_DIR` and JSONs to `JSON_ARCHIVE_DIR`. Failures move the scan file to `ERROR_DIR`.
 
 ### Individual Steps
 

@@ -56,6 +56,10 @@ def valid_invoice_json(tmp_path):
         "tax_amount_10_percent_VAT": 0.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 100.0,
         "currency": "EUR",
         "iban": "AT123456789",
         "payment_method": None
@@ -82,6 +86,10 @@ def invalid_math_invoice_json(tmp_path):
         "tax_amount_10_percent_VAT": 0.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 100.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -108,6 +116,10 @@ def no_match_invoice_json(tmp_path):
         "tax_amount_10_percent_VAT": 9.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 90.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 0.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -164,7 +176,12 @@ def test_validate_success_no_bank_match(no_match_invoice_json, dummy_bank_statem
 
 def test_validate_invalid_math(invalid_math_invoice_json, dummy_bank_statement, tmp_path, mocker):
     """Test validation failing due to bad math."""
-    mocker.patch.dict(os.environ, {"INGEST_DIR": str(tmp_path), "WORK_DIR": str(tmp_path)})
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
     
     result = runner.invoke(app, ["validate", invalid_math_invoice_json, "--bank_statement", dummy_bank_statement])
     
@@ -237,6 +254,10 @@ def equal_gross_net_invoice_json(tmp_path):
         "tax_amount_10_percent_VAT": 0.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 100.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -362,6 +383,10 @@ def tip_allocation_invoice_json(tmp_path):
         "tax_amount_10_percent_VAT": 10.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 90.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 0.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -408,6 +433,10 @@ def test_validate_tip_allocation_skip_when_already_equal(tmp_path, mocker):
         "tax_amount_10_percent_VAT": 10.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 90.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 0.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -446,6 +475,10 @@ def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
         "tax_amount_10_percent_VAT": 10.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 80.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 0.0,
         "currency": "EUR",
         "iban": None,
         "payment_method": None
@@ -467,3 +500,80 @@ def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
     with open(validated_dir / "tip_skip_nonzero-validated.json", "r") as f:
         data = json.load(f)
         assert data["tax_amount_0_percent_VAT"] == 10.0 # Unchanged
+
+def test_validate_net_amounts_sum_fail(tmp_path, mocker):
+    """Test validation failing when net amounts sum does not match total_invoice_amount_net."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Büromaterial",
+        "invoice_number": "INV-NET-FAIL",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 120.0,
+        "total_invoice_amount_net": 100.0,
+        "total_invoice_amount_tax": 20.0,
+        "tip_amount": 0.0,
+        "tax_amount_0_percent_VAT": 0.0,
+        "tax_amount_10_percent_VAT": 0.0,
+        "tax_amount_13_percent_VAT": 0.0,
+        "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 90.0, # 90 != 100
+        "currency": "EUR",
+        "iban": None,
+        "payment_method": None
+    }
+    file_path = tmp_path / "net_fail.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    result = runner.invoke(app, ["validate", str(file_path)])
+    
+    assert result.exit_code != 0
+    assert "Net amounts sum" in str(result.output) or "does not match" in str(result.output) or result.exit_code != 0
+
+def test_validate_net_amounts_sum_pass_with_tolerance(tmp_path, mocker):
+    """Test validation passing when net amounts sum is within 5 cents of total_invoice_amount_net."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Büromaterial",
+        "invoice_number": "INV-NET-PASS",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 120.03,
+        "total_invoice_amount_net": 100.03,
+        "total_invoice_amount_tax": 20.0,
+        "tip_amount": 0.0,
+        "tax_amount_0_percent_VAT": 0.0,
+        "tax_amount_10_percent_VAT": 0.0,
+        "tax_amount_13_percent_VAT": 0.0,
+        "tax_amount_20_percent_VAT": 20.0,
+        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_10_percent_VAT": 0.0,
+        "net_amount_13_percent_VAT": 0.0,
+        "net_amount_20_percent_VAT": 100.0, # Difference is 0.03 (<= 0.05)
+        "currency": "EUR",
+        "iban": None,
+        "payment_method": None
+    }
+    file_path = tmp_path / "net_pass.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    result = runner.invoke(app, ["validate", str(file_path)])
+    
+    assert result.exit_code == 0

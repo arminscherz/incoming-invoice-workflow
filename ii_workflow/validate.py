@@ -117,6 +117,18 @@ def validate_run(
 
     logger.success(f"Validation passed: Tax amounts match the tax sum for {json_path.name}")
     
+    sum_net_amounts = (
+        invoice.net_amount_0_percent_VAT +
+        invoice.net_amount_10_percent_VAT +
+        invoice.net_amount_13_percent_VAT +
+        invoice.net_amount_20_percent_VAT
+    )
+    if abs(sum_net_amounts - net) > 0.05:
+        logger.error(f"Math validation failed: Net amounts sum ({sum_net_amounts}) does not match total invoice net amount ({net})")
+        raise typer.Exit(code=1)
+
+    logger.success(f"Validation passed: Net amounts match the total net amount for {json_path.name}")
+    
     # 4. Tip Validation
     if invoice.total_payment_amount_gross is not None:
         calculated_tip = round(invoice.total_payment_amount_gross - invoice.total_invoice_amount_gross, 2)

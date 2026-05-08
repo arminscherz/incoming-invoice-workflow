@@ -101,7 +101,8 @@ def ingest_run(
                                 "Note that the scanned image may contain both the invoice and a separate payment receipt. "
                                 "If the total amounts differ between the invoice and the receipt, this is often due to tips. "
                                 "In such cases, prioritize the total amount listed on the invoice for the total_invoice_amount_* fields. "
-                                "Use the tip_amount field for the tip and total_payment_amount_gross for the receipt total."
+                                "Use the tip_amount field for the tip and total_payment_amount_gross for the receipt total. "
+                                "Also extract the individual net amounts corresponding to each VAT level (0%, 10%, 13%, 20%)."
                             )
                         }
                     ]
