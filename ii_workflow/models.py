@@ -22,3 +22,4 @@ class InvoiceData(BaseModel):
     currency: str = Field("EUR", description="3-letter currency code (e.g., EUR, USD).")
     iban: Optional[str] = Field(None, description="The IBAN of the vendor for payment.")
     payment_method: Optional[str] = Field(None, description="The payment method used for the transaction (e.g. 'Bankkonto', 'bar', ...).")
+    gdrive_link: Optional[str] = Field(None, description="A Google Drive link to the original scan document.")

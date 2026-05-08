@@ -7,7 +7,119 @@ from pathlib import Path
 import typer
 from loguru import logger
 from google.genai import Client, types
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 from .models import InvoiceData
+
+def get_gdrive_service():
+    """Builds and returns a Google Drive service using OAuth."""
+    client_id = os.getenv("GDRIVE_OAUTH_CLIENT_ID")
+    client_secret = os.getenv("GDRIVE_OAUTH_CLIENT_KEY")
+    token_path = os.getenv("GDRIVE_TOKEN_JSON", "token.json")
+
+    if not client_id or not client_secret:
+        logger.warning("GDRIVE_OAUTH_CLIENT_ID or GDRIVE_OAUTH_CLIENT_KEY not found. Google Drive link lookup will be skipped.")
+        return None
+
+    scopes = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.metadata.readonly"]
+    creds = None
+
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, scopes)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                logger.error(f"Failed to refresh GDrive token: {e}")
+                creds = None
+        
+        if not creds:
+            # Construct client config from env vars
+            client_config = {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": ["http://localhost"]
+                }
+            }
+            try:
+                flow = InstalledAppFlow.from_client_config(client_config, scopes)
+                creds = flow.run_local_server(port=0)
+                # Save the credentials for the next run
+                with open(token_path, "w") as token:
+                    token.write(creds.to_json())
+            except Exception as e:
+                logger.error(f"Failed to perform GDrive OAuth flow: {e}")
+                return None
+
+    try:
+        service = build("drive", "v3", credentials=creds)
+        return service
+    except Exception as e:
+        logger.error(f"Failed to build GDrive service: {e}")
+        return None
+
+def get_gdrive_folder_id(service, folder_name: str) -> str | None:
+    """Searches for a folder by name on Google Drive and returns its ID."""
+    if not service:
+        return None
+    try:
+        query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)',
+            pageSize=1
+        ).execute()
+        files = results.get('files', [])
+        if files:
+            return files[0].get('id')
+        return None
+    except Exception as e:
+        logger.warning(f"Error looking up Google Drive folder '{folder_name}': {e}")
+        return None
+
+def get_gdrive_link(service, filename: str) -> str | None:
+    """Searches for a file by name on Google Drive and returns its webViewLink."""
+    if not service:
+        return None
+    
+    try:
+        # 1. Determine folder constraint
+        folder_name = os.getenv("INGEST_DIR", "ingest")
+        folder_id = get_gdrive_folder_id(service, folder_name)
+        
+        # 2. Build search query
+        query = f"name = '{filename}' and trashed = false"
+        if folder_id:
+            query += f" and '{folder_id}' in parents"
+            logger.info(f"Searching for '{filename}' in GDrive folder '{folder_name}' ({folder_id})")
+        else:
+            logger.warning(f"Could not find GDrive folder '{folder_name}'. Searching globally for '{filename}'.")
+
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name, webViewLink)',
+            pageSize=1
+        ).execute()
+        
+        files = results.get('files', [])
+        if files:
+            return files[0].get('webViewLink')
+        
+        logger.info(f"File '{filename}' not found on Google Drive.")
+        return None
+    except Exception as e:
+        logger.warning(f"Error looking up Google Drive link for '{filename}': {e}")
+        return None
 
 def clean_schema(schema: dict) -> dict:
     """Cleans a Pydantic JSON schema to be compatible with Gemini REST API Schema."""
@@ -173,6 +285,17 @@ def ingest_run(
 
             extracted_data = results[0]
             
+            # 7. Add Google Drive Link
+            try:
+                service = get_gdrive_service()
+                if service:
+                    link = get_gdrive_link(service, invoice_file.name)
+                    if link:
+                        extracted_data.gdrive_link = link
+                        logger.info(f"Added GDrive link: {link}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch GDrive link: {e}")
+
             output_path = ingested_dir / f"{invoice_file.stem}.json"
             with open(output_path, "w") as f:
                 json.dump(extracted_data.model_dump(), f, indent=2)

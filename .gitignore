@@ -223,5 +223,9 @@ __marimo__/
 /ingested/
 /archive/
 /Eingang/
+/ER 2026/
+/JSON Archive/
 /error/
 *.csv
+credentials.json
+token.json
