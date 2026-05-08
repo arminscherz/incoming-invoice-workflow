@@ -414,8 +414,8 @@ def test_validate_tip_allocation_to_0_vat(tip_allocation_invoice_json, tmp_path,
     
     with open(output_path, "r") as f:
         data = json.load(f)
-        # tax_amount_0_percent_VAT was 0.0, tip_amount was 5.0 -> should be 5.0
-        assert data["tax_amount_0_percent_VAT"] == 5.0
+        # net_amount_0_percent_VAT was 0.0, tip_amount was 5.0 -> should be 5.0
+        assert data["net_amount_0_percent_VAT"] == 5.0
 
 def test_validate_tip_allocation_skip_when_already_equal(tmp_path, mocker):
     """Test that we skip allocation if tip already equals the 0% VAT field."""
@@ -424,16 +424,16 @@ def test_validate_tip_allocation_skip_when_already_equal(tmp_path, mocker):
         "purchase_category": "Geschäftsessen",
         "invoice_number": "INV-TIP-002",
         "date": "2026-05-04",
-        "total_invoice_amount_gross": 105.0,
-        "total_invoice_amount_net": 90.0,
+        "total_invoice_amount_gross": 110.0,
+        "total_invoice_amount_net": 95.0,
         "total_invoice_amount_tax": 15.0,
         "tip_amount": 5.0,
-        "total_payment_amount_gross": 105.0,
-        "tax_amount_0_percent_VAT": 5.0, # Already equal to tip
-        "tax_amount_10_percent_VAT": 10.0,
+        "total_payment_amount_gross": 115.0,
+        "tax_amount_0_percent_VAT": 0.0,
+        "tax_amount_10_percent_VAT": 15.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
-        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 5.0, # Already equal to tip
         "net_amount_10_percent_VAT": 90.0,
         "net_amount_13_percent_VAT": 0.0,
         "net_amount_20_percent_VAT": 0.0,
@@ -457,7 +457,7 @@ def test_validate_tip_allocation_skip_when_already_equal(tmp_path, mocker):
     
     with open(validated_dir / "tip_skip_equal-validated.json", "r") as f:
         data = json.load(f)
-        assert data["tax_amount_0_percent_VAT"] == 5.0 # Unchanged
+        assert data["net_amount_0_percent_VAT"] == 5.0 # Unchanged
 
 def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
     """Test that we skip allocation if 0% VAT is already non-zero (but different from tip)."""
@@ -466,16 +466,16 @@ def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
         "purchase_category": "Geschäftsessen",
         "invoice_number": "INV-TIP-003",
         "date": "2026-05-04",
-        "total_invoice_amount_gross": 100.0,
-        "total_invoice_amount_net": 80.0,
+        "total_invoice_amount_gross": 110.0,
+        "total_invoice_amount_net": 90.0,
         "total_invoice_amount_tax": 20.0,
         "tip_amount": 5.0,
-        "total_payment_amount_gross": 105.0,
-        "tax_amount_0_percent_VAT": 10.0, # Already non-zero
-        "tax_amount_10_percent_VAT": 10.0,
+        "total_payment_amount_gross": 115.0,
+        "tax_amount_0_percent_VAT": 0.0,
+        "tax_amount_10_percent_VAT": 20.0,
         "tax_amount_13_percent_VAT": 0.0,
         "tax_amount_20_percent_VAT": 0.0,
-        "net_amount_0_percent_VAT": 0.0,
+        "net_amount_0_percent_VAT": 10.0, # Already non-zero
         "net_amount_10_percent_VAT": 80.0,
         "net_amount_13_percent_VAT": 0.0,
         "net_amount_20_percent_VAT": 0.0,
@@ -499,7 +499,7 @@ def test_validate_tip_allocation_skip_when_tax_zero_not_zero(tmp_path, mocker):
     
     with open(validated_dir / "tip_skip_nonzero-validated.json", "r") as f:
         data = json.load(f)
-        assert data["tax_amount_0_percent_VAT"] == 10.0 # Unchanged
+        assert data["net_amount_0_percent_VAT"] == 10.0 # Unchanged (it was 10.0 in the fixture)
 
 def test_validate_net_amounts_sum_fail(tmp_path, mocker):
     """Test validation failing when net amounts sum does not match total_invoice_amount_net."""
@@ -577,3 +577,33 @@ def test_validate_net_amounts_sum_pass_with_tolerance(tmp_path, mocker):
     result = runner.invoke(app, ["validate", str(file_path)])
     
     assert result.exit_code == 0
+def test_validate_tax_amount_0_vat_is_always_zero(tmp_path, mocker):
+    """Test that tax_amount_0_percent_VAT is forced to 0 even if it was non-zero in input."""
+    data = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Büromaterial",
+        "invoice_number": "INV-001",
+        "date": "2026-05-04",
+        "total_invoice_amount_gross": 100.0,
+        "total_invoice_amount_net": 100.0,
+        "total_invoice_amount_tax": 0.0,
+        "tax_amount_0_percent_VAT": 5.0, # Incorrectly non-zero
+        "net_amount_0_percent_VAT": 100.0,
+        "currency": "EUR"
+    }
+    file_path = tmp_path / "tax_zero_check.json"
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        
+    validated_dir = tmp_path / "validated"
+    mocker.patch.dict(os.environ, {
+        "INGEST_DIR": str(tmp_path), 
+        "WORK_DIR": str(tmp_path),
+        "VALIDATED_DIR": str(validated_dir)
+    })
+    
+    runner.invoke(app, ["validate", str(file_path)])
+    
+    with open(validated_dir / "tax_zero_check-validated.json", "r") as f:
+        data = json.load(f)
+        assert data["tax_amount_0_percent_VAT"] == 0.0

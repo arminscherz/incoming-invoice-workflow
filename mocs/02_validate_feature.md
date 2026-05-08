@@ -27,8 +27,8 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
   - If no match is found: Update `payment_method` in the JSON to `"bar"`.
   - If validation fails (e.g., math doesn't add up), log the error and return a non-zero exit code so the orchestrator can move it to the `ERROR_DIR`.
 - **Tip to 0% VAT Allocation**:
-  - After validations, if `tip_amount` > 0 and `tax_amount_0_percent_VAT` == 0, set `tax_amount_0_percent_VAT = tip_amount`.
-  - Skip if `tip_amount` == 0 or if it already equals `tax_amount_0_percent_VAT`.
+  - After validations, if `tip_amount` > 0 and `net_amount_0_percent_VAT` == 0, set `net_amount_0_percent_VAT = tip_amount`.
+  - Skip if `tip_amount` == 0 or if it already equals `net_amount_0_percent_VAT`.
   - Log the update for transparency.
 
 ## Implementation Details

@@ -220,3 +220,53 @@ def test_ingest_run_relative_path(mock_genai_client, tmp_path, mocker):
     expected_json_path = ingested_dir / "invoice.json"
     assert expected_json_path.exists()
     assert str(expected_json_path.absolute()) in result.output
+def test_ingest_tax_amount_0_vat_is_always_zero(mock_genai_client, tmp_path, mocker):
+    """Test that tax_amount_0_percent_VAT is always 0 even if LLM returns something else."""
+    invoice_file = tmp_path / "test_invoice.pdf"
+    invoice_file.write_text("dummy content")
+    
+    ingested_dir = tmp_path / "ingested"
+    mocker.patch.dict(os.environ, {
+        "WORK_DIR": str(tmp_path), 
+        "INGESTED_DIR": str(ingested_dir),
+        "GEMINI_API_KEY": "test-key"
+    })
+    
+    # Mock Gemini response with non-zero tax_amount_0_percent_VAT
+    mock_data_dict = {
+        "vendor_name": "Test Vendor",
+        "purchase_category": "Büromaterial",
+        "invoice_number": "INV-001",
+        "date": "2024-05-04",
+        "total_invoice_amount_gross": 100.0,
+        "total_invoice_amount_net": 100.0,
+        "total_invoice_amount_tax": 0.0,
+        "tax_amount_0_percent_VAT": 5.0, # LLM "error"
+        "net_amount_0_percent_VAT": 100.0,
+        "currency": "EUR"
+    }
+    
+    # Setup mocks for batch mode
+    mock_job = mocker.Mock(state="COMPLETED", name="batches/test-job")
+    mock_job.dest = mocker.Mock(file_name="files/output")
+    mock_genai_client.return_value.files.upload.return_value = mocker.Mock(name="files/input")
+    mock_genai_client.return_value.batches.create.return_value = mock_job
+    mock_genai_client.return_value.batches.get.return_value = mock_job
+    
+    response_jsonl = json.dumps({
+        "response": {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": json.dumps(mock_data_dict)}]
+                }
+            }]
+        }
+    })
+    mock_genai_client.return_value.files.download.return_value = response_jsonl.encode("utf-8")
+    
+    runner.invoke(app, ["ingest", str(invoice_file)])
+    
+    expected_json_path = ingested_dir / "test_invoice.json"
+    with open(expected_json_path, "r") as f:
+        data = json.load(f)
+        assert data["tax_amount_0_percent_VAT"] == 0.0
