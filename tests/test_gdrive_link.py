@@ -134,6 +134,7 @@ def test_ingest_gdrive_link_not_found(mock_genai_client, mock_gdrive_service, tm
 
 def test_record_with_gdrive_link(tmp_path, mocker):
     """Test that the record command includes gdrive_link in the CSV."""
+    mocker.patch("ii_workflow.record.check_google_sheet_duplicate", return_value=False)
     # 1. Setup paths
     json_dir = tmp_path / "ingested"
     json_dir.mkdir()

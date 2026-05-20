@@ -9,6 +9,11 @@ from ii_workflow.main import app
 
 runner = CliRunner()
 
+@pytest.fixture(autouse=True)
+def mock_sheets_duplicate_check(mocker):
+    """Mock out the Google Sheets duplicate check globally in this test file."""
+    return mocker.patch("ii_workflow.record.check_google_sheet_duplicate", return_value=False)
+
 @pytest.fixture
 def sample_validated_json(tmp_path):
     """Creates a sample validated JSON file."""
@@ -125,6 +130,10 @@ def test_record_existing_csv_with_duplicate(sample_validated_json, tmp_path, moc
         "VALIDATED_DIR": str(tmp_path / "validated"),
         "RESULT_COLUMNS": "vendor_name;invoice_number;date;total_invoice_amount_gross"
     })
+    
+    # Mock check_google_sheet_duplicate to return False first (not duplicate), then True (duplicate)
+    mock_check = mocker.patch("ii_workflow.record.check_google_sheet_duplicate")
+    mock_check.side_effect = [False, True]
     
     # First write
     runner.invoke(app, ["record", sample_validated_json, "--result_csv", str(result_csv)])

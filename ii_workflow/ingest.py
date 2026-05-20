@@ -3,6 +3,7 @@ import json
 import time
 import base64
 import tempfile
+import random
 from pathlib import Path
 import typer
 from loguru import logger
@@ -13,17 +14,39 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from .models import InvoiceData
 
-def get_gdrive_service():
-    """Builds and returns a Google Drive service using OAuth."""
+def call_with_retry(func, *args, max_retries=3, initial_delay=5, multiplier=2, **kwargs):
+    """
+    Executes a function with retry logic and exponential backoff + jitter.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if attempt < max_retries:
+                # Exponential backoff with jitter
+                delay = initial_delay * (multiplier ** attempt)
+                delay_with_jitter = delay + random.uniform(0, min(5, delay * 0.1))
+                logger.warning(f"API call {func.__name__ if hasattr(func, '__name__') else 'API'} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {delay_with_jitter:.2f}s...")
+                time.sleep(delay_with_jitter)
+            else:
+                logger.error(f"API call failed after {max_retries + 1} attempts: {e}")
+                raise
+
+def get_google_credentials():
+    """Gets and returns Google OAuth2 credentials."""
     client_id = os.getenv("GDRIVE_OAUTH_CLIENT_ID")
     client_secret = os.getenv("GDRIVE_OAUTH_CLIENT_KEY")
     token_path = os.getenv("GDRIVE_TOKEN_JSON", "token.json")
 
     if not client_id or not client_secret:
-        logger.warning("GDRIVE_OAUTH_CLIENT_ID or GDRIVE_OAUTH_CLIENT_KEY not found. Google Drive link lookup will be skipped.")
+        logger.warning("GDRIVE_OAUTH_CLIENT_ID or GDRIVE_OAUTH_CLIENT_KEY not found. Google OAuth lookup will be skipped.")
         return None
 
-    scopes = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.metadata.readonly"]
+    scopes = [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+    ]
     creds = None
 
     if os.path.exists(token_path):
@@ -58,10 +81,19 @@ def get_gdrive_service():
             except Exception as e:
                 logger.error(f"Failed to perform GDrive OAuth flow: {e}")
                 return None
+    return creds
 
+def get_gdrive_service():
+    """Builds and returns a Google Drive service using OAuth."""
+    creds = get_google_credentials()
+    if not creds:
+        return None
     try:
         service = build("drive", "v3", credentials=creds)
         return service
+    except Exception as e:
+        logger.error(f"Failed to build GDrive service: {e}")
+        return None
     except Exception as e:
         logger.error(f"Failed to build GDrive service: {e}")
         return None
@@ -246,7 +278,8 @@ def ingest_run(
         
         try:
             # 3. Upload JSONL to Gemini Files API
-            uploaded_file = client.files.upload(
+            uploaded_file = call_with_retry(
+                client.files.upload,
                 file=temp_jsonl_path,
                 config={"mime_type": "application/jsonl"}
             )
@@ -254,42 +287,21 @@ def ingest_run(
             
             # 4. Create Batch Job using the uploaded file name with retries
             ai_model = os.getenv("AI_MODEL", "gemini-flash-latest")
-            max_retries = 3
-            job = None
-            for attempt in range(max_retries + 1):
-                try:
-                    job = client.batches.create(
-                        model=ai_model,
-                        src=uploaded_file.name
-                    )
-                    break
-                except Exception as e:
-                    if attempt < max_retries:
-                        wait_time = 5 * (2 ** attempt)
-                        logger.warning(f"Batch creation failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
-                        time.sleep(wait_time)
-                    else:
-                        logger.error(f"Batch creation failed after {max_retries + 1} attempts: {e}")
-                        raise
+            job = call_with_retry(
+                client.batches.create,
+                model=ai_model,
+                src=uploaded_file.name
+            )
 
             job_name = job.name
             logger.info(f"Batch job created: {job_name}")
 
             # 5. Polling loop with retries for status check
             while True:
-                job_status = None
-                for poll_attempt in range(max_retries + 1):
-                    try:
-                        job_status = client.batches.get(name=job_name)
-                        break
-                    except Exception as e:
-                        if poll_attempt < max_retries:
-                            wait_time = 5 * (2 ** poll_attempt)
-                            logger.warning(f"Polling failed (attempt {poll_attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
-                            time.sleep(wait_time)
-                        else:
-                            logger.error(f"Polling failed after {max_retries + 1} attempts: {e}")
-                            raise
+                job_status = call_with_retry(
+                    client.batches.get,
+                    name=job_name
+                )
 
                 state_str = str(job_status.state)
                 logger.info(f"Job state: {state_str}")
@@ -351,7 +363,7 @@ def download_batch_results(client: Client, job) -> list[InvoiceData]:
     results = []
     
     if output_file_name:
-        content_bytes = client.files.download(file=output_file_name)
+        content_bytes = call_with_retry(client.files.download, file=output_file_name)
         # Content is JSONL
         for line in content_bytes.decode("utf-8").splitlines():
             if not line.strip(): continue

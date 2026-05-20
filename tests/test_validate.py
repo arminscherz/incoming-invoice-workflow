@@ -577,8 +577,8 @@ def test_validate_net_amounts_sum_pass_with_tolerance(tmp_path, mocker):
     result = runner.invoke(app, ["validate", str(file_path)])
     
     assert result.exit_code == 0
-def test_validate_tax_amount_0_vat_is_always_zero(tmp_path, mocker):
-    """Test that tax_amount_0_percent_VAT is forced to 0 even if it was non-zero in input."""
+def test_validate_tax_amount_0_vat_warning_and_fail(tmp_path, mocker):
+    """Test that tax_amount_0_percent_VAT being non-zero triggers warning and validation failure."""
     data = {
         "vendor_name": "Test Vendor",
         "purchase_category": "Büromaterial",
@@ -602,8 +602,7 @@ def test_validate_tax_amount_0_vat_is_always_zero(tmp_path, mocker):
         "VALIDATED_DIR": str(validated_dir)
     })
     
-    runner.invoke(app, ["validate", str(file_path)])
+    result = runner.invoke(app, ["validate", str(file_path)])
     
-    with open(validated_dir / "tax_zero_check-validated.json", "r") as f:
-        data = json.load(f)
-        assert data["tax_amount_0_percent_VAT"] == 0.0
+    assert result.exit_code != 0
+    assert not (validated_dir / "tax_zero_check-validated.json").exists()

@@ -8,7 +8,7 @@ This purpose of this workflow is to automate the reception and filing of incomin
 2. A LLM is called to ingest the scanned invoices & payment receipts and extract structured invoice data as a JSON.
 3. Data is validated and accounting details are calculated. Invoices that fail validation or extraction are moved to an ERROR_DIR.
 4. The extracted invoice data is used to search in a bank account data file (e.g. xlsx-Format) to see if the invoice is already paid.
-5. The extracted data is stored as a CSV in the WORK_DIR directory. Duplicate checking is performed against the output CSV (e.g., matching Vendor and Invoice Number) to prevent double processing.
+5. The extracted data is stored as a CSV in the WORK_DIR directory. Duplicate checking is performed against a consolidated Google Worksheet tab named 'Ausgaben' (with configurable spreadsheet ID in `.env`) to prevent double processing.
 6. The successfully processed invoice files are moved to the ARCHIVE_DIR directory.
 
 ## Technical implementation

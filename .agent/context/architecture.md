@@ -40,13 +40,13 @@ Functionality is divided into distinct phases. Do not mix these responsibilities
     - **Output:**
         - File path to validated JSON invoice files.
 3. **Record (`record`):**
-    - **Goal:** Write data to CSV and check for duplicates.
+    - **Goal:** Write data to CSV after checking for duplicates.
     - **Inputs:**
         - File path to the validated invoice data as JSON files.
         - File path to the CSV file for data export
         - File path to the folder for invoice archiving
-    - **Tech:** CSV standard library.
-    - **Output:** Path to updated CSV. Moves source files to ARCHIVE_DIR.
+    - **Tech:** CSV standard library, Google Sheets API (for duplicate lookups).
+    - **Output:** Path to updated CSV. Moves source files to ARCHIVE_DIR. If a duplicate is found in the 'Ausgaben' sheet tab, it skips writing to CSV and exits with `0`.
 4. **Orchestration (`process`):**
     - **Goal:** Combine steps 1-3 for multiple invoices (up to 20).
     - **Logic:**
@@ -61,7 +61,8 @@ Functionality is divided into distinct phases. Do not mix these responsibilities
 - **Data Validation:** `pydantic` (integrates natively with Gemini structured output)
 - **CSV processing:** `csv` standard library (pandas is not needed for CSVs).
 - **Excel processing:** `openpyxl` library to read `.xlsx` bank account data files.
-- **AI/LLM:** Google Gemini API (genai SDK). The API is called in batch mode, but the calling service waits for results (polling).
+- **Google Sheets / Drive:** Google API Python Client (`google-api-python-client`, `google-auth-oauthlib`) using OAuth with expanded scopes (`spreadsheets.readonly` and `drive.readonly`) for live duplicate checks and file linking.
+- **AI/LLM:** Google Gemini API (genai SDK). The API is called in batch mode with an exponential backoff retry mechanism (including random jitter) for all API interactions to ensure high ingestion resilience.
 - **Logging:** `loguru` or `rich` for structured logging.
 
 ## 3. Directory Structure & Modules
@@ -90,11 +91,13 @@ Invoices triggering non-zero exits should be logged clearly and moved to `ERROR_
 
 - **Type Hinting:** All functions must have Python type hints.
 - **Path Handling:** Use `pathlib.Path` instead of `os.path` strings where possible.
-- **Environment Variables:** Access secrets and config via `os.getenv` or `dotenv`. Do **not** hardcode API keys.
+- **Environment Variables:** Access secrets and config via `os.getenv` or `dotenv`. Do **not** hardcode API keys. The consolidated spreadsheet ID is loaded via `GOOGLE_SPREADSHEET_ID`.
 - **Logging:** Always use the central logging mechanism. Provide clear error logs as notifications are out of scope for the MVP.
-- **Idempotency:** Ensure that commands can be re-run safely without duplicating data if a crash occurs (e.g., checking existing JSONs/CSV rows).
+- **Idempotency:** Ensure that commands can be re-run safely without duplicating data by performing Google Sheet duplicate checks against the consolidated sheet before processing files.
+- **Enhanced Bank Statement Matching Heuristics:** Matches are scored to prioritize structured references (invoice numbers matched in description or Nachricht) over exact/partial vendor keywords, and log explicit warnings if multiple transaction candidates match.
+- **Soft Warning Design:** If implausible values are extracted (e.g. non-zero values for 0% VAT), they are kept as extracted, logging a soft warning. Downstream math checks automatically determine whether the overall invoice is mathematically consistent (warning and failing validation instead of silently overriding values).
 
-## 5. Test driven development
+## 6. Test driven development
 
 - **MOC concept**: Create a Mini Orange Concept (MOC) for each new feature. The MOC will be a markdown file that describes the feature and how it should be implemented. This MOC will be used to generate the test cases and the implementation code.
 - Use `pytest` for unit, integration and functional testing.

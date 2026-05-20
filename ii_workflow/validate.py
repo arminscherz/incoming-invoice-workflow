@@ -80,6 +80,10 @@ def validate_run(
         logger.error(f"Failed to parse invoice JSON: {e}")
         raise typer.Exit(code=1)
 
+    # 2b. Soft Warning for 0% VAT
+    if invoice.tax_amount_0_percent_VAT > 0.0:
+        logger.warning(f"Inconsistent tax amount for 0% VAT detected: {invoice.tax_amount_0_percent_VAT}. Keeping value as extracted.")
+
     # 3. Pre-check: Gross == Net
     gross = invoice.total_invoice_amount_gross
     net = invoice.total_invoice_amount_net
@@ -174,6 +178,7 @@ def validate_run(
             ws = wb.active
             
             headers = None
+            candidates = []
             for row in ws.iter_rows(values_only=True):
                 if not headers:
                     # Look for header row
@@ -203,32 +208,57 @@ def validate_run(
                     if days_diff > 7:
                         continue
                         
-                    # Check vendor match
-                    gegenpartei = str(row[headers.get("Gegenpartei", -1)] or "").lower()
-                    bezeichnung = str(row[headers.get("Bezeichnung", -1)] or "").lower()
-                    nachricht = str(row[headers.get("Nachricht", -1)] or "").lower()
+                    candidates.append((row, txn_date, txn_amount))
+                except (ValueError, KeyError, TypeError):
+                    continue
+
+            # Evaluate candidate transactions
+            best_candidate = None
+            match_type = None # "structured", "exact_vendor", "partial_keyword"
+            
+            if len(candidates) > 1:
+                logger.warning(f"Multiple bank transactions ({len(candidates)}) match the amount ({target_amount}) and date range for invoice {json_path.name}. Checking text details...")
+                
+            for cand_row, cand_date, cand_amount in candidates:
+                gegenpartei = str(cand_row[headers.get("Gegenpartei", -1)] or "").lower()
+                bezeichnung = str(cand_row[headers.get("Bezeichnung", -1)] or "").lower()
+                nachricht = str(cand_row[headers.get("Nachricht", -1)] or "").lower()
+                
+                combined_text = f"{gegenpartei} {bezeichnung} {nachricht}"
+                
+                # 1. Structured match (e.g. invoice number)
+                inv_num_clean = invoice.invoice_number.strip().lower()
+                if len(inv_num_clean) >= 3 and inv_num_clean in combined_text:
+                    best_candidate = (cand_row, cand_date, cand_amount)
+                    match_type = "structured"
+                    break # Structured is highest priority, stop loop
                     
-                    combined_text = f"{gegenpartei} {bezeichnung} {nachricht}"
-                    
-                    if cleaned_vendor and cleaned_vendor in combined_text:
-                        payment_method = "Bankkonto"
-                        logger.info(f"Matched bank transaction on {txn_date.date()} for amount {txn_amount} (Exact vendor match)")
-                        break
-                    
-                    # Fallback: Keyword match
+                # 2. Exact vendor match
+                if cleaned_vendor and cleaned_vendor in combined_text:
+                    if not best_candidate or match_type != "structured":
+                        best_candidate = (cand_row, cand_date, cand_amount)
+                        match_type = "exact_vendor"
+                        
+                # 3. Fallback: Keyword match
+                elif not best_candidate:
                     match_found = False
                     for kw in vendor_keywords:
                         if kw in combined_text:
                             match_found = True
                             break
-                            
                     if match_found:
-                        payment_method = "Bankkonto"
-                        logger.warning(f"Matched bank transaction on {txn_date.date()} for amount {txn_amount} (Partial keyword match only. Verify manually if correct.)")
-                        break
+                        best_candidate = (cand_row, cand_date, cand_amount)
+                        match_type = "partial_keyword"
                         
-                except (ValueError, KeyError, TypeError):
-                    continue
+            if best_candidate:
+                cand_row, cand_date, cand_amount = best_candidate
+                payment_method = "Bankkonto"
+                if match_type == "structured":
+                    logger.success(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Structured invoice number match: '{invoice.invoice_number}')")
+                elif match_type == "exact_vendor":
+                    logger.info(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Exact vendor match)")
+                elif match_type == "partial_keyword":
+                    logger.warning(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Partial keyword match only. Verify manually if correct.)")
                     
     except Exception as e:
         logger.error(f"Error processing bank statement: {e}")
