@@ -8,10 +8,12 @@ The **Incoming Invoice Workflow** (ii-workflow) streamlines the transition from 
 
 ### Key Features
 
-- **AI-Powered Extraction:** Uses Google Gemini to extract structured JSON data from scanned invoices & payment receipts. Token usage is minimized by using batch mode.
-- **Robust Validation:** Implements Pydantic schemas for strict data integrity.
-- **Payment Verification:** Automatically checks bank statement data (in '.xlsx' format) to identify paid invoices.
-- **Idempotent Processing:** Prevents duplicate entries by matching Vendor and Invoice Numbers.
+- **AI-Powered Extraction:** Uses Google Gemini to extract structured JSON data from scanned invoices & payment receipts (including additional fields like vendor and customer VAT IDs, addresses, and payment references). Uses resilient exponential backoff retry logic.
+- **Resilient Image & Drive Integration:** Automatically converts raw images (PNG, JPG, JPEG) to PDF using Pillow. Automatically polls Google Drive to retrieve the synchronized file link.
+- **Robust Validation & Math Checks:** Implements Pydantic schemas for data integrity. Features a modern "Soft Warning" design for 0% VAT validation to alert on inconsistencies while letting math validation checks catch issues.
+- **Enhanced Payment Verification:** Scans `.xlsx` bank statement data to identify paid invoices. Prioritizes structured invoice/reference number matching and logs warnings for multiple matches.
+- **ZUGFeRD/Factur-X Hybrid PDF/A-3 Compliance**: Embeds document-level booking XML data into archived PDF invoices using `facturx` to produce standard hybrid PDF/A-3 files.
+- **Google Sheets Duplicate Prevention:** Performs live lookups against a consolidated Google Sheets `'Ausgaben'` tab (spreadsheet ID configurable in `.env`) to prevent double-recording.
 - **Modular CLI:** Each step (`ingest`, `validate`, `record`) can be run independently or via the main orchestrator.
 - **TDD Backed:** Developed using Mini Orange Concepts (MOCs) and comprehensive `pytest` suites.
 
@@ -31,6 +33,8 @@ Failures at any stage are moved to the `ERROR_DIR` for manual review, ensuring n
 - **CLI:** [Typer](https://typer.tiangolo.com/)
 - **Data Validation:** [Pydantic v2](https://docs.pydantic.dev/)
 - **AI/LLM:** Google Gemini API (`google-genai`)
+- **Google Integrations:** `google-api-python-client`, `google-auth-oauthlib`
+- **PDF & Image Processing:** `Pillow`, `facturx`
 - **Excel/CSV:** `openpyxl`, `csv` (standard library)
 - **Logging:** `loguru`
 
@@ -70,6 +74,12 @@ Create a `.env` file in the root directory based on the project requirements:
 ```env
 # Gemini API Configuration
 GEMINI_API_KEY=your_gemini_api_key_here
+
+# Google Drive & Sheets Integration
+GOOGLE_SPREADSHEET_ID=your_consolidated_google_spreadsheet_id_here
+GDRIVE_OAUTH_CLIENT_ID=your_google_oauth_client_id_here
+GDRIVE_OAUTH_CLIENT_KEY=your_google_oauth_client_secret_here
+GDRIVE_TOKEN_JSON=token.json
 
 # Directory Configuration
 INGEST_DIR=the directory (relative to shell's working directory) where scanned invoice / payment receipt files are expected
@@ -126,8 +136,10 @@ For fine-grained control:
 - **Record Results:**
 
   ```bash
-  python -m ii_workflow.main record [PATH_TO_JSON] --result_csv [PATH_TO_RESULT_CSV_FILE]
+  python -m ii_workflow.main record [PATH_TO_JSON] --result_csv [PATH_TO_RESULT_CSV_FILE] [--scan_file PATH] [--scan_archive_dir DIR]
   ```
+
+  *Note: If `--scan_file` and `--scan_archive_dir` are provided, the CLI will embed Factur-X/ZUGFeRD BASIC WL compliant XML metadata into the scanned PDF (converting raw images if necessary) and save the resulting hybrid PDF/A-3 to the archive directory.*
 
 ## 📂 Project Structure
 

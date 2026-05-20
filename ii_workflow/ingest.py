@@ -118,8 +118,8 @@ def get_gdrive_folder_id(service, folder_name: str) -> str | None:
         logger.warning(f"Error looking up Google Drive folder '{folder_name}': {e}")
         return None
 
-def get_gdrive_link(service, filename: str) -> str | None:
-    """Searches for a file by name on Google Drive and returns its webViewLink."""
+def get_gdrive_link(service, filename: str, max_retries: int = 12, delay: int = 5) -> str | None:
+    """Searches for a file by name on Google Drive and returns its webViewLink with polling/timeout."""
     if not service:
         return None
     
@@ -136,18 +136,24 @@ def get_gdrive_link(service, filename: str) -> str | None:
         else:
             logger.warning(f"Could not find GDrive folder '{folder_name}'. Searching globally for '{filename}'.")
 
-        results = service.files().list(
-            q=query,
-            spaces='drive',
-            fields='files(id, name, webViewLink)',
-            pageSize=1
-        ).execute()
-        
-        files = results.get('files', [])
-        if files:
-            return files[0].get('webViewLink')
-        
-        logger.info(f"File '{filename}' not found on Google Drive.")
+        for attempt in range(max_retries):
+            results = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name, webViewLink)',
+                pageSize=1
+            ).execute()
+            
+            files = results.get('files', [])
+            if files:
+                link = files[0].get('webViewLink')
+                logger.info(f"GDrive link found for '{filename}': {link} (attempt {attempt + 1})")
+                return link
+                
+            logger.info(f"File '{filename}' not found on Google Drive yet. Waiting {delay}s for sync (attempt {attempt + 1}/{max_retries})...")
+            time.sleep(delay)
+            
+        logger.warning(f"File '{filename}' not found on Google Drive after {max_retries * delay}s.")
         return None
     except Exception as e:
         logger.warning(f"Error looking up Google Drive link for '{filename}': {e}")
@@ -198,10 +204,26 @@ def ingest_run(
 
     # Determine mime type
     extension = invoice_file.suffix.lower()
+    if extension in [".png", ".jpg", ".jpeg"]:
+        try:
+            from PIL import Image
+            logger.info(f"Converting image {invoice_file.name} to PDF during Ingest step...")
+            pdf_path = invoice_file.with_suffix(".pdf")
+            with Image.open(invoice_file) as img:
+                img_rgb = img.convert("RGB")
+                img_rgb.save(pdf_path, "PDF")
+            
+            # Delete original image file after successful conversion
+            invoice_file.unlink()
+            logger.info(f"Successfully converted image to PDF and deleted original {invoice_file.name}")
+            invoice_file = pdf_path
+            extension = ".pdf"
+        except Exception as e:
+            logger.error(f"Failed to convert image to PDF: {e}")
+            raise typer.Exit(code=1)
+
     if extension == ".pdf":
         mime_type = "application/pdf"
-    elif extension in [".png", ".jpg", ".jpeg"]:
-        mime_type = f"image/{extension[1:]}".replace("jpeg", "jpeg") # just being safe
     else:
         logger.error(f"Unsupported file format: {extension}")
         raise typer.Exit(code=1)
@@ -246,8 +268,13 @@ def ingest_run(
                                 "If the total amounts differ between the invoice and the receipt, this is often due to tips. "
                                 "In such cases, prioritize the total amount listed on the invoice for the total_invoice_amount_* fields. "
                                 "Use the tip_amount field for the tip and total_payment_amount_gross for the receipt total. "
-                                "Also extract the individual net amounts corresponding to each VAT level (0%, 10%, 13%, 20%)."
+                                "Also extract the individual net amounts corresponding to each VAT level (0%, 10%, 13%, 20%). "
+                                "Additionally, extract the vendor VAT ID (UID number, e.g., ATU12345678, DE123456789) as vendor_vat_id, "
+                                "the customer VAT ID (UID number) as customer_vat_id, the customer/buyer name as customer_name, "
+                                "and the vendor's address street, zip code, city, and 2-letter country code in the corresponding fields. "
+                                "Also extract any structured payment reference (Zahlungsreferenz, Verwendungszweck, or ISO 11649 RF reference) in payment_reference."
                             )
+
                         }
                     ]
                 },

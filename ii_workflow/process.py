@@ -85,6 +85,14 @@ def process_run(
                 error_details = "Step: Ingest (Missing output)"
                 raise typer.Exit(code=1)
                 
+            # If the original file was an image, it has been converted to PDF during ingest.
+            # We must detect the new PDF and update scan_file path so validation and record use the PDF.
+            if scan_file.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                pdf_scan_file = scan_file.with_suffix(".pdf")
+                if pdf_scan_file.exists():
+                    scan_file = pdf_scan_file
+                    logger.info(f"Detected image conversion to PDF. scan_file is now: {scan_file.name}")
+
             # Step 2: Validate
             logger.info("Step 2: Validate")
             try:
@@ -103,7 +111,12 @@ def process_run(
             logger.info("Step 3: Record")
             # Note: A duplicate will raise typer.Exit(code=0) inside record_run
             try:
-                record_run(str(validated_json), result_csv=result_csv)
+                record_run(
+                    str(validated_json), 
+                    result_csv=result_csv,
+                    scan_file=str(scan_file),
+                    scan_archive_dir=str(scan_archive_dir)
+                )
             except typer.Exit as e:
                 if e.exit_code != 0:
                     error_details = "Step: Record"
@@ -147,7 +160,8 @@ def process_run(
                 execution_results.append({"invoice": scan_file.name, "status": status, "reason": reason})
                 
                 logger.info(f"Archiving successful file {scan_file.name}")
-                shutil.move(str(scan_file), str(scan_archive_dir / scan_file.name))
+                if scan_file.exists():
+                    shutil.move(str(scan_file), str(scan_archive_dir / scan_file.name))
                 
                 if intermediate_json.exists():
                     shutil.move(str(intermediate_json), str(json_archive_dir / intermediate_json.name))
@@ -157,7 +171,8 @@ def process_run(
             else:
                 execution_results.append({"invoice": scan_file.name, "status": "ERROR", "reason": error_details})
                 logger.warning(f"Moving failed file {scan_file.name} to ERROR_DIR")
-                shutil.move(str(scan_file), str(error_dir / scan_file.name))
+                if scan_file.exists():
+                    shutil.move(str(scan_file), str(error_dir / scan_file.name))
         except Exception as e:
             logger.error(f"Failed to move files during cleanup for {scan_file.name}: {e}")
 

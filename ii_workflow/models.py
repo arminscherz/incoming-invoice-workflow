@@ -23,3 +23,12 @@ class InvoiceData(BaseModel):
     iban: Optional[str] = Field(None, description="The IBAN of the vendor for payment.")
     payment_method: Optional[str] = Field(None, description="The payment method used for the transaction (e.g. 'Bankkonto', 'bar', ...).")
     gdrive_link: Optional[str] = Field(None, description="A Google Drive link to the original scan document.")
+    vendor_vat_id: Optional[str] = Field(None, description="The VAT ID / UID number of the vendor (e.g., ATU12345678, DE123456789).")
+    customer_vat_id: Optional[str] = Field(None, description="The VAT ID / UID number of the customer/buyer (e.g., ATU12345678).")
+    customer_name: Optional[str] = Field(None, description="The name of the customer/buyer listed on the invoice.")
+    vendor_address_street: Optional[str] = Field(None, description="The street address of the vendor.")
+    vendor_address_zip: Optional[str] = Field(None, description="The postal/zip code of the vendor.")
+    vendor_address_city: Optional[str] = Field(None, description="The city of the vendor.")
+    vendor_address_country: Optional[str] = Field("AT", description="The 2-letter ISO country code of the vendor (e.g. AT, DE, FR). Default is AT.")
+    payment_reference: Optional[str] = Field(None, description="The structured payment reference (Zahlungsreferenz / Verwendungszweck / RF Reference) if found on the invoice.")
+
