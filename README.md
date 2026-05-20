@@ -120,6 +120,7 @@ For fine-grained control:
 - **Ingest Invoices:**
 
   ```bash
+  source venv/bin/activate
   python -m ii_workflow.main ingest [PATH_TO_INVOICE]
   ```
 
@@ -128,6 +129,7 @@ For fine-grained control:
 - **Validate Data:**
 
   ```bash
+  source venv/bin/activate
   python -m ii_workflow.main validate [PATH_TO_JSON] --bank_statement [PATH_TO_BANK_STATEMENT]
   ```
 
@@ -136,6 +138,7 @@ For fine-grained control:
 - **Record Results:**
 
   ```bash
+  source venv/bin/activate
   python -m ii_workflow.main record [PATH_TO_JSON] --result_csv [PATH_TO_RESULT_CSV_FILE] [--scan_file PATH] [--scan_archive_dir DIR]
   ```
 
