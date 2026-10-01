@@ -34,6 +34,18 @@ def _parse_date(date_obj) -> datetime:
     except ValueError:
         return None
 
+COMMON_VENDOR_TERMS = {
+    "gmbh", "ag", "kg", "og", "gesmbh", "e.u.", "eu", "co", "ltd", "inc", "sa", "se", "gbr",
+    "restaurant", "gasthaus", "gasthof", "bistro", "cafe", "café", "hotel", "markt", "filiale",
+    "service", "services", "austria", "wien", "vienna", "vendor", "shop", "store", "online"
+}
+
+STOPWORDS = {
+    "und", "der", "die", "das", "den", "dem", "des", "von", "vom", "mit", "fuer", "für",
+    "bei", "zum", "zur", "im", "in", "am", "an", "auf", "aus", "nach", "ueber", "über",
+    "and", "the", "for", "with", "at", "by", "from", "to", "of", "in", "on"
+}
+
 def validate_run(
     invoice_json: str = typer.Argument(..., help="Path to the extracted invoice JSON."),
     bank_statement: str = typer.Option(None, "--bank_statement", help="Path to the bank account data file (.xlsx).")
@@ -83,6 +95,16 @@ def validate_run(
     # 2b. Soft Warning for 0% VAT
     if invoice.tax_amount_0_percent_VAT > 0.0:
         logger.warning(f"Inconsistent tax amount for 0% VAT detected: {invoice.tax_amount_0_percent_VAT}. Keeping value as extracted.")
+
+    # 2c. Invoice Date Check (> 6 months from today)
+    inv_date_dt = _parse_date(invoice.date)
+    if inv_date_dt:
+        today = datetime.now()
+        days_diff_today = abs((today.date() - inv_date_dt.date()).days)
+        if days_diff_today > 182:
+            logger.warning(
+                f"Invoice date '{invoice.date}' differs by more than 6 months ({days_diff_today} days) from today's date ({today.strftime('%Y-%m-%d')}) for {json_path.name}. Please verify manually."
+            )
 
     # 3. Pre-check: Gross == Net
     gross = invoice.total_invoice_amount_gross
@@ -161,16 +183,22 @@ def validate_run(
     # 7. Bank Matching Heuristics
     payment_method = "bar" # Default
     target_amount = invoice.total_payment_amount_gross if invoice.total_payment_amount_gross is not None else invoice.total_invoice_amount_gross
+    inv_amount = invoice.total_invoice_amount_gross
     invoice_date = _parse_date(invoice.date)
     
     # Clean vendor name for exact match
     import re
-    cleaned_vendor = re.sub(r'(?i)\b(gmbh|ag|e\.u\.|kg|gesmbh)\b', '', invoice.vendor_name)
-    cleaned_vendor = re.sub(r'[^a-zA-Z0-9\säöüÄÖÜß]', '', cleaned_vendor)
+    cleaned_vendor = re.sub(r'(?i)\b(gmbh|ag|e\.u\.|kg|gesmbh|og|co|ltd)\b', '', invoice.vendor_name)
+    cleaned_vendor = re.sub(r'[^a-zA-Z0-9\säöüÄÖÜß]', ' ', cleaned_vendor)
     cleaned_vendor = ' '.join(cleaned_vendor.split()).lower()
     
-    # Extract vendor keywords (words > 2 chars)
-    vendor_keywords = [w for w in cleaned_vendor.split() if len(w) > 2]
+    # Extract vendor keywords (excluding stopwords and common vendor terms)
+    vendor_keywords = [
+        w for w in cleaned_vendor.split()
+        if len(w) > 2 and w not in STOPWORDS and w not in COMMON_VENDOR_TERMS
+    ]
+
+    inv_num_clean = invoice.invoice_number.strip().lower()
 
     try:
         if bank_path:
@@ -194,71 +222,133 @@ def validate_run(
                     if betrag is None: continue
                     txn_amount = abs(float(betrag))
                     
-                    # Check amount match (+/- 0.05 tolerance)
-                    if abs(txn_amount - target_amount) > 0.05:
+                    # 1. Amount match evaluation: exact, tip, or span
+                    amount_match_type = None
+                    if abs(txn_amount - target_amount) <= 0.05 or abs(txn_amount - inv_amount) <= 0.05:
+                        amount_match_type = "exact"
+                    elif txn_amount > target_amount and (txn_amount - target_amount) <= max(10.0, target_amount * 0.30):
+                        amount_match_type = "tip"
+                    elif abs(txn_amount - target_amount) <= max(5.0, target_amount * 0.15):
+                        amount_match_type = "span"
+                        
+                    if not amount_match_type:
                         continue
                     
-                    # Check date match (+/- 7 days)
+                    # 2. Date match evaluation (candidate dates + date span)
                     valuta_val = row[headers["Valutadatum"]]
                     txn_date = _parse_date(valuta_val)
-                    if not invoice_date or not txn_date:
+                    if not txn_date:
                         continue
                         
-                    days_diff = abs((invoice_date - txn_date).days)
-                    if days_diff > 7:
+                    cand_dates = []
+                    if invoice_date:
+                        cand_dates.append(invoice_date)
+                        if invoice_date.year != txn_date.year:
+                            try:
+                                cand_dates.append(invoice_date.replace(year=txn_date.year))
+                            except ValueError:
+                                pass
+                            
+                    if not cand_dates:
                         continue
                         
-                    candidates.append((row, txn_date, txn_amount))
+                    min_diff = min(abs((d - txn_date).days) for d in cand_dates)
+                    
+                    # 3. Text details match
+                    gegenpartei = str(row[headers.get("Gegenpartei", -1)] or "").lower()
+                    bezeichnung = str(row[headers.get("Bezeichnung", -1)] or "").lower()
+                    nachricht = str(row[headers.get("Nachricht", -1)] or "").lower()
+                    combined_text = f"{gegenpartei} {bezeichnung} {nachricht}"
+                    
+                    text_match_type = None
+                    matched_kws = []
+                    if len(inv_num_clean) >= 3 and inv_num_clean in combined_text:
+                        text_match_type = "structured"
+                    elif cleaned_vendor and (cleaned_vendor in combined_text or combined_text in cleaned_vendor):
+                        text_match_type = "exact_vendor"
+                    else:
+                        for kw in vendor_keywords:
+                            if kw in combined_text:
+                                matched_kws.append(kw)
+                        if matched_kws:
+                            text_match_type = "partial_keyword"
+                            
+                    if not text_match_type:
+                        continue
+
+                    # Date span check: allow up to 30 days for structured match, otherwise up to 14 days
+                    max_allowed_days = 30 if text_match_type == "structured" else 14
+                    if min_diff > max_allowed_days:
+                        continue
+                        
+                    # Non-exact amount requires high-confidence text match
+                    if amount_match_type != "exact" and text_match_type == "partial_keyword" and len(matched_kws) < 2:
+                        continue
+                        
+                    # Calculate candidate score
+                    score = 0
+                    if text_match_type == "structured": score += 100
+                    elif text_match_type == "exact_vendor": score += 50
+                    elif text_match_type == "partial_keyword": score += 15 * len(matched_kws)
+                    
+                    if amount_match_type == "exact": score += 30
+                    elif amount_match_type == "tip": score += 15
+                    elif amount_match_type == "span": score += 5
+                    
+                    score -= min_diff # Prioritize closer dates
+                    
+                    candidates.append({
+                        "score": score,
+                        "row": row,
+                        "txn_date": txn_date,
+                        "txn_amount": txn_amount,
+                        "text_match_type": text_match_type,
+                        "amount_match_type": amount_match_type,
+                        "min_diff": min_diff,
+                        "matched_kws": matched_kws
+                    })
                 except (ValueError, KeyError, TypeError):
                     continue
 
             # Evaluate candidate transactions
-            best_candidate = None
-            match_type = None # "structured", "exact_vendor", "partial_keyword"
-            
             if len(candidates) > 1:
-                logger.warning(f"Multiple bank transactions ({len(candidates)}) match the amount ({target_amount}) and date range for invoice {json_path.name}. Checking text details...")
+                logger.warning(f"Multiple bank transactions ({len(candidates)}) match criteria for invoice {json_path.name}. Selecting highest scoring match...")
                 
-            for cand_row, cand_date, cand_amount in candidates:
-                gegenpartei = str(cand_row[headers.get("Gegenpartei", -1)] or "").lower()
-                bezeichnung = str(cand_row[headers.get("Bezeichnung", -1)] or "").lower()
-                nachricht = str(cand_row[headers.get("Nachricht", -1)] or "").lower()
-                
-                combined_text = f"{gegenpartei} {bezeichnung} {nachricht}"
-                
-                # 1. Structured match (e.g. invoice number)
-                inv_num_clean = invoice.invoice_number.strip().lower()
-                if len(inv_num_clean) >= 3 and inv_num_clean in combined_text:
-                    best_candidate = (cand_row, cand_date, cand_amount)
-                    match_type = "structured"
-                    break # Structured is highest priority, stop loop
-                    
-                # 2. Exact vendor match
-                if cleaned_vendor and cleaned_vendor in combined_text:
-                    if not best_candidate or match_type != "structured":
-                        best_candidate = (cand_row, cand_date, cand_amount)
-                        match_type = "exact_vendor"
-                        
-                # 3. Fallback: Keyword match
-                elif not best_candidate:
-                    match_found = False
-                    for kw in vendor_keywords:
-                        if kw in combined_text:
-                            match_found = True
-                            break
-                    if match_found:
-                        best_candidate = (cand_row, cand_date, cand_amount)
-                        match_type = "partial_keyword"
-                        
-            if best_candidate:
-                cand_row, cand_date, cand_amount = best_candidate
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            
+            if candidates:
+                best = candidates[0]
+                cand_row = best["row"]
+                cand_date = best["txn_date"]
+                cand_amount = best["txn_amount"]
+                match_type = best["text_match_type"]
+                amt_match = best["amount_match_type"]
                 payment_method = "Bankkonto"
+                
+                # Check for year correction in invoice date based on bank transaction date
+                if invoice_date and invoice_date.year != cand_date.year:
+                    try:
+                        adj = invoice_date.replace(year=cand_date.year)
+                        if abs((adj - cand_date).days) <= 14:
+                            logger.warning(f"Correcting invoice year in date from {invoice.date} to {adj.strftime('%Y-%m-%d')} based on bank transaction")
+                            invoice.date = adj.strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+                        
+                # Update tip and payment amount if bank transaction included tip
+                if amt_match == "tip" and cand_amount > invoice.total_invoice_amount_gross:
+                    calc_tip = round(cand_amount - invoice.total_invoice_amount_gross, 2)
+                    invoice.total_payment_amount_gross = cand_amount
+                    if invoice.tip_amount == 0.0:
+                        invoice.tip_amount = calc_tip
+                        logger.info(f"Updated payment amount to {cand_amount} and tip amount to {calc_tip} for {json_path.name} based on bank transaction")
+                
                 if match_type == "structured":
                     logger.success(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Structured invoice number match: '{invoice.invoice_number}')")
                 elif match_type == "exact_vendor":
-                    logger.info(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Exact vendor match)")
+                    logger.info(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Exact vendor match, amount match: {amt_match})")
                 elif match_type == "partial_keyword":
-                    logger.warning(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Partial keyword match only. Verify manually if correct.)")
+                    logger.warning(f"Matched bank transaction on {cand_date.date()} for amount {cand_amount} (Partial keyword match on {best['matched_kws']}, amount match: {amt_match}. Verify manually if correct.)")
                     
     except Exception as e:
         logger.error(f"Error processing bank statement: {e}")

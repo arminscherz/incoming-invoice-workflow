@@ -21,12 +21,24 @@ Validate the extracted invoice data (JSON) and cross-reference it with a bank ac
     - `tax_amount_10_percent_VAT` must match `net_amount_10_percent_VAT * 0.10` (+ / - 2 cents).
     - `tax_amount_13_percent_VAT` must match `net_amount_13_percent_VAT * 0.13` (+ / - 2 cents).
     - `tax_amount_20_percent_VAT` must match `net_amount_20_percent_VAT * 0.20` (+ / - 2 cents).
+  - **Invoice Date Discrepancy Check**: If `invoice.date` differs by more than 6 months from today's date, log a warning prompting manual verification.
 - **Bank Lookup Logic (Heuristics)**:
   - Read the `.xlsx` file, skipping lines until the header row ('Valutadatum', 'Buchungsdatum', 'Betrag', 'Währung', 'Gegenpartei', 'Bezeichnung', 'Referenz', 'Nachricht', 'Zahlungs-ID').
   - Compare each transaction against the invoice:
-    - Amount Match: Transaction 'Betrag' matches `total_payment_amount_gross` (fallback to `total_invoice_amount_gross`). Note: Bank statements usually have negative amounts for outgoing payments; ensure correct sign handling (absolute value).
-    - Date Match: Invoice `date` is within +/- 3 days of transaction 'Valutadatum'.
-    - Vendor Match: Any word/part of `vendor_name` (ignoring case) is present in 'Gegenpartei', 'Bezeichnung', or 'Nachricht'.
+    - **Amount Matching**:
+      - Exact match (+/- 0.05 tolerance) against `total_payment_amount_gross` or `total_invoice_amount_gross`.
+      - Tip / rounded amount span: If transaction debit is higher than the invoice amount by up to 30% or 10 EUR, match as tip and update `total_payment_amount_gross` and `tip_amount`.
+      - Amount span: Small tolerance (+/- 15% or up to 5 EUR) if high-confidence vendor/structured match is present.
+    - **Date Matching**:
+      - Candidate dates include `invoice.date` and year-adjusted dates if OCR misread the year (e.g. 2020 vs 2026).
+      - Date span: Allows up to 14 days difference (or up to 30 days for structured/invoice-number matches).
+      - Automatically corrects year discrepancies in `invoice.date` when confirmed by bank transaction date.
+    - **Vendor & Text Matching**:
+      - Structured match: Invoice number (>= 3 chars) present in transaction details.
+      - Exact vendor match: Cleaned vendor name present in transaction text.
+      - Partial keyword match: Meaningful vendor keywords (ignoring common stopwords and legal/industry terms like GmbH, Restaurant, etc.). For non-exact amounts, requires strong matching (structured, exact vendor, or >= 2 keywords).
+    - **Candidate Scoring**:
+      - Ranks candidate transactions by match quality (structured > exact vendor > keyword; exact amount > tip > span; penalizes day distance) and selects the best candidate.
 - **Outcome**:
   - If a match is found: Update `payment_method` in the JSON to `"Bankkonto"`.
   - If no match is found: Update `payment_method` in the JSON to `"bar"`.
