@@ -12,6 +12,7 @@ runner = CliRunner()
 def mock_genai_client(mocker):
     """Fixture to mock the Google GenAI client and speed up time.sleep."""
     mocker.patch("time.sleep", return_value=None)
+    mocker.patch("ii_workflow.ingest.get_gdrive_service", return_value=None)
     mock_client = mocker.patch("ii_workflow.ingest.Client")
     return mock_client
 

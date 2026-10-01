@@ -9,6 +9,7 @@ import typer
 from loguru import logger
 from google.genai import Client, types
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -32,32 +33,103 @@ def call_with_retry(func, *args, max_retries=3, initial_delay=5, multiplier=2, *
                 logger.error(f"API call failed after {max_retries + 1} attempts: {e}")
                 raise
 
+def resolve_working_path(path_str: str | None, default_filename: str) -> Path | None:
+    """
+    Resolves a file path relative to the working directory (WORK_DIR or cwd).
+    Returns existing Path if found, or expected Path in work_dir if path_str was explicitly specified.
+    """
+    work_dir = Path(os.getenv("WORK_DIR", ".")).resolve()
+    target = path_str or default_filename
+    p = Path(target)
+
+    if p.is_absolute():
+        return p if p.exists() else None
+
+    # Check relative to work_dir
+    candidate_work = (work_dir / p).resolve()
+    if candidate_work.exists():
+        return candidate_work
+
+    # Check relative to current working directory
+    candidate_cwd = (Path.cwd() / p).resolve()
+    if candidate_cwd.exists():
+        return candidate_cwd
+
+    # If path_str was explicitly specified, return candidate_work even if it doesn't exist yet
+    if path_str:
+        return candidate_work
+
+    return None
+
+def get_token_path(token_env_var: str | None, default_filename: str = "token.json") -> Path:
+    """
+    Resolves token.json path relative to the working directory (WORK_DIR or cwd).
+    """
+    work_dir = Path(os.getenv("WORK_DIR", ".")).resolve()
+    target = token_env_var or default_filename
+    p = Path(target)
+    if p.is_absolute():
+        return p
+    candidate_work = (work_dir / p).resolve()
+    if candidate_work.exists():
+        return candidate_work
+    candidate_cwd = (Path.cwd() / p).resolve()
+    if candidate_cwd.exists():
+        return candidate_cwd
+    return candidate_work
+
 def get_google_credentials():
-    """Gets and returns Google OAuth2 credentials."""
-    client_id = os.getenv("GDRIVE_OAUTH_CLIENT_ID")
-    client_secret = os.getenv("GDRIVE_OAUTH_CLIENT_KEY")
-    token_path = os.getenv("GDRIVE_TOKEN_JSON", "token.json")
-
-    if not client_id or not client_secret:
-        logger.warning("GDRIVE_OAUTH_CLIENT_ID or GDRIVE_OAUTH_CLIENT_KEY not found. Google OAuth lookup will be skipped.")
-        return None
-
+    """Gets and returns Google credentials (supports Service Account and OAuth2)."""
     scopes = [
         "https://www.googleapis.com/auth/drive.readonly",
         "https://www.googleapis.com/auth/drive.metadata.readonly",
         "https://www.googleapis.com/auth/spreadsheets.readonly"
     ]
+
+    # 1. Check for Service Account credentials first in the working directory (permanent, non-expiring)
+    service_account_env = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    sa_path = resolve_working_path(service_account_env, "service_account.json")
+
+    if sa_path and sa_path.exists():
+        try:
+            logger.info(f"Using Google Service Account credentials from: {sa_path}")
+            return service_account.Credentials.from_service_account_file(str(sa_path), scopes=scopes)
+        except Exception as e:
+            logger.error(f"Failed to load Service Account credentials from {sa_path}: {e}")
+
+    # 2. Fall back to OAuth2 user credentials (expected in working directory)
+    client_id = os.getenv("GDRIVE_OAUTH_CLIENT_ID")
+    client_secret = os.getenv("GDRIVE_OAUTH_CLIENT_KEY")
+    token_path = get_token_path(os.getenv("GDRIVE_TOKEN_JSON"), "token.json")
+
+    if not client_id or not client_secret:
+        logger.warning("GDRIVE_OAUTH_CLIENT_ID or GDRIVE_OAUTH_CLIENT_KEY not found. Google OAuth lookup will be skipped.")
+        return None
+
     creds = None
 
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, scopes)
+    if token_path.exists():
+        try:
+            creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+        except Exception as e:
+            logger.warning(f"Could not load credentials from {token_path}: {e}")
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
+                # Persist refreshed token so expiry and rotation are updated
+                with open(token_path, "w") as token:
+                    token.write(creds.to_json())
+                logger.info(f"Successfully refreshed and saved GDrive token to {token_path}")
             except Exception as e:
-                logger.error(f"Failed to refresh GDrive token: {e}")
+                logger.error(
+                    f"Failed to refresh GDrive token: {e}. "
+                    "Note: If your Google Cloud OAuth consent screen is in 'Testing' mode, "
+                    "refresh tokens expire after 7 days. Switch publishing status to 'In production' "
+                    "or configure a Service Account (service_account.json in working directory) for permanent access."
+                )
                 creds = None
         
         if not creds:
@@ -75,7 +147,7 @@ def get_google_credentials():
             try:
                 flow = InstalledAppFlow.from_client_config(client_config, scopes)
                 creds = flow.run_local_server(port=0)
-                # Save the credentials for the next run
+                # Save the credentials in the working directory for the next run
                 with open(token_path, "w") as token:
                     token.write(creds.to_json())
             except Exception as e:
@@ -84,16 +156,13 @@ def get_google_credentials():
     return creds
 
 def get_gdrive_service():
-    """Builds and returns a Google Drive service using OAuth."""
+    """Builds and returns a Google Drive service using OAuth or Service Account."""
     creds = get_google_credentials()
     if not creds:
         return None
     try:
         service = build("drive", "v3", credentials=creds)
         return service
-    except Exception as e:
-        logger.error(f"Failed to build GDrive service: {e}")
-        return None
     except Exception as e:
         logger.error(f"Failed to build GDrive service: {e}")
         return None

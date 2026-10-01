@@ -229,3 +229,4 @@ __marimo__/
 *.csv
 credentials.json
 token.json
+service_account*.json

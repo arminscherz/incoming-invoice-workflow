@@ -61,7 +61,7 @@ Functionality is divided into distinct phases. Do not mix these responsibilities
 - **Data Validation:** `pydantic` (integrates natively with Gemini structured output)
 - **CSV processing:** `csv` standard library (pandas is not needed for CSVs).
 - **Excel processing:** `openpyxl` library to read `.xlsx` bank account data files.
-- **Google Sheets / Drive:** Google API Python Client (`google-api-python-client`, `google-auth-oauthlib`) using OAuth with expanded scopes (`spreadsheets.readonly` and `drive.readonly`) for live duplicate checks and file linking.
+- **Google Sheets / Drive:** Google API Python Client (`google-api-python-client`, `google-auth`) supporting Service Account credentials located in the working directory (`service_account.json` or `GDRIVE_SERVICE_ACCOUNT_JSON`) for permanent, headless access, with OAuth 2.0 user credentials as fallback (`spreadsheets.readonly` and `drive.readonly` scopes) for live duplicate checks and file linking.
 - **AI/LLM:** Google Gemini API (genai SDK). The API is called in batch mode with an exponential backoff retry mechanism (including random jitter) for all API interactions to ensure high ingestion resilience.
 - **Logging:** `loguru` or `rich` for structured logging.
 

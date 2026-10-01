@@ -77,6 +77,15 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 # Google Drive & Sheets Integration
 GOOGLE_SPREADSHEET_ID=your_consolidated_google_spreadsheet_id_here
+
+# Option A: Google Cloud Service Account (Recommended for permanent, non-expiring access)
+# Place 'service_account.json' directly in your working directory (where ii-process is executed)
+# to keep credentials separate from the git repository.
+GDRIVE_SERVICE_ACCOUNT_JSON=service_account.json
+
+# Option B: Google OAuth 2.0 User Credentials (Fallback)
+# Note: token.json will also be saved in and read from the working directory.
+# If using OAuth, set the GCP OAuth Consent Screen to "In production" to prevent 7-day expiration.
 GDRIVE_OAUTH_CLIENT_ID=your_google_oauth_client_id_here
 GDRIVE_OAUTH_CLIENT_KEY=your_google_oauth_client_secret_here
 GDRIVE_TOKEN_JSON=token.json
@@ -93,6 +102,32 @@ ERROR_DIR=the directory (relative to shell's working directory) where files are 
 # Record Configuration (Semicolon separated JSON keys)
 RESULT_COLUMNS=Columns for the CSV-Output-File (Semicolon separated)
 ```
+
+#### 🔑 Google Service Account Setup (Recommended)
+
+To achieve permanent, non-expiring permissions without recurring browser prompts or token expirations:
+
+1. **Enable Google APIs in Google Cloud Console:**
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/) and select your project.
+   - Go to **APIs & Services** > **Library**.
+   - Ensure both **Google Drive API** and **Google Sheets API** are enabled.
+
+2. **Create the Service Account:**
+   - Navigate to **IAM & Admin** > **Service Accounts**.
+   - Click **Create Service Account** (e.g. name: `invoice-processor`).
+   - Click **Create and Continue**, then click **Done** (no broad project IAM roles are needed).
+   - Copy the generated **Service Account Email** (e.g. `invoice-processor@<project-id>.iam.gserviceaccount.com`).
+
+3. **Generate & Download JSON Key:**
+   - Click on the created service account in the list.
+   - Go to the **Keys** tab > click **Add Key** > **Create new key**.
+   - Choose **JSON** and download the file.
+   - Rename/save this file as `service_account.json` directly in your **working directory** (the directory where `ii-process` is executed, e.g. `.../Eingangsrechnungen/service_account.json`).
+   - *Security Note:* Keeping `service_account.json` in your working directory keeps credentials isolated from the git source code repository.
+
+4. **Share Google Sheet & Drive Folder with the Service Account Email:**
+   - **Google Sheet (`GOOGLE_SPREADSHEET_ID`):** Open your consolidated Google Sheet, click **Share**, and grant **Viewer** (or **Editor**) access to your service account email. This enables duplicate checking against the `Ausgaben` tab.
+   - **Google Drive Invoice Folder (`INGEST_DIR` / `Eingang`):** In Google Drive, locate your incoming invoices folder, click **Share**, and grant **Viewer** access to your service account email. This enables the workflow to look up files and generate `webViewLink`s.
 
 ## 📖 Usage
 
